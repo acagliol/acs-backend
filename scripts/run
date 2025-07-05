@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+import os
+import platform
+import subprocess
+import sys
+
+# Map OS to script folder and extension
+os_map = {
+    'Windows': ('windows', '.ps1'),
+    'Darwin': ('mac', '.sh'),
+    'Linux': ('linux', '.sh'),
+}
+
+system = platform.system()
+
+if system not in os_map:
+    print(f"Unsupported OS: {system}")
+    sys.exit(1)
+
+folder, ext = os_map[system]
+
+if len(sys.argv) < 2:
+    print("Usage: scripts/run <command> [args...]")
+    sys.exit(1)
+
+command = sys.argv[1]
+args = sys.argv[2:]
+
+script_path = os.path.join(os.path.dirname(__file__), folder, f"{command}{ext}")
+
+if not os.path.exists(script_path):
+    print(f"Script not found: {script_path}")
+    sys.exit(1)
+
+if system == 'Windows':
+    # Convert Unix-style parameters to PowerShell-style parameters
+    ps_args = []
+    for arg in args:
+        if arg == '--dry-run':
+            ps_args.append('-DryRun')
+        elif arg == '--force':
+            ps_args.append('-Force')
+        elif arg == '--help':
+            ps_args.append('-Help')
+        else:
+            ps_args.append(arg)
+    
+    # Use PowerShell to run .ps1 scripts
+    cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path] + ps_args
+else:
+    # Use bash for .sh scripts
+    cmd = ["bash", script_path] + args
+
+try:
+    subprocess.run(cmd, check=True)
+except subprocess.CalledProcessError as e:
+    sys.exit(e.returncode) 

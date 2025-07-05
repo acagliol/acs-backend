@@ -1,0 +1,47 @@
+openapi: 3.0.1
+info:
+  title: ${api_config.display_name}
+  description: ${api_config.description}
+  version: 1.0.0
+servers:
+  - url: https://${gateway_url}
+paths:
+%{ for endpoint_name, endpoint in endpoints ~}
+  ${endpoint.path}:
+    ${lower(endpoint.method)}:
+      summary: ${endpoint.name}
+      operationId: ${endpoint.name}
+      x-google-backend:
+        address: https://${endpoint.function_region}-${project_id}.cloudfunctions.net/${endpoint.function_name}-${environment}
+      %{ if endpoint.cors_enabled ~}
+      x-google-cors:
+        allowOrigin: "*"
+        allowMethods: "GET, POST, PUT, DELETE, OPTIONS"
+        allowHeaders: "Content-Type, Authorization"
+        exposeHeaders: "Content-Length"
+        maxAgeSeconds: 3600
+      %{ endif ~}
+      %{ if endpoint.auth_required ~}
+      security:
+        - Bearer: []
+      %{ endif ~}
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '500':
+          description: Internal server error
+%{ endfor ~}
+components:
+  securitySchemes:
+    Bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT 
