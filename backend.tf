@@ -4,7 +4,7 @@
 terraform {
   backend "gcs" {
     # These values will be provided via -backend-config flags
-    # bucket = "terraform-state-{environment}-anay"
+    # bucket = "tf-state-{environment}-2"
     # prefix = "terraform/state"
   }
 } 

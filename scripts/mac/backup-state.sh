@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 # Script configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-CONFIG_FILE="$PROJECT_ROOT/config/environments.json"
+
 ENVIRONMENTS=("dev" "staging" "prod")
 
 # Function to print colored output
@@ -90,15 +90,17 @@ validate_environment() {
 # Function to load environment configuration
 load_environment_config() {
     local env="$1"
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
+    local env_config_file="$PROJECT_ROOT/environments/$env.json"
+    
+    if [[ ! -f "$env_config_file" ]]; then
+        print_error "Environment configuration file not found: $env_config_file"
         exit 1
     fi
     if command -v jq &> /dev/null; then
         local config
-        config=$(jq -r ".environments.$env" "$CONFIG_FILE" 2>/dev/null)
-        if [[ "$config" == "null" ]] || [[ -z "$config" ]]; then
-            print_error "Environment '$env' not found in configuration file"
+        config=$(cat "$env_config_file" 2>/dev/null)
+        if [[ -z "$config" ]]; then
+            print_error "Failed to read environment configuration file"
             exit 1
         fi
         echo "$config"
@@ -119,9 +121,9 @@ check_environment_exists() {
         return 1
     fi
     
-    # Check if main.tf exists in project root
-    if [[ ! -f "$PROJECT_ROOT/main.tf" ]]; then
-        print_error "main.tf not found in project root"
+    # Check if main-independent.tf exists in project root
+    if [[ ! -f "$PROJECT_ROOT/main-independent.tf" ]]; then
+        print_error "main-independent.tf not found in project root"
         return 1
     fi
     

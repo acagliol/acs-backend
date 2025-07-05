@@ -42,6 +42,10 @@ if system == 'Windows':
             ps_args.append('-Force')
         elif arg == '--help':
             ps_args.append('-Help')
+        elif arg == '--phase1':
+            ps_args.append('-Phase1')
+        elif arg == '--phase2':
+            ps_args.append('-Phase2')
         else:
             ps_args.append(arg)
     

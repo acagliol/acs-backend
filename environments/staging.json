@@ -1,0 +1,53 @@
+{
+  "environment": "staging",
+  "project_id": "acs-staging-464702",
+  "project_name": "acs-staging",
+  "region": "us-central1",
+  "zone": "us-central1-c",
+  "bucket_name": "tf-state-staging-2",
+  "subnet_cidr": "10.0.2.0/24",
+  "machine_type": "e2-small",
+  "disk_size": 50,
+  
+  "firestore": {
+    "database_id": "db-staging",
+    "location_id": "us-central1",
+    "database_type": "FIRESTORE_NATIVE"
+  },
+  
+  "cloud_functions": {
+    "region": "us-central1",
+    "functions": {}
+  },
+  
+  "api_gateway": {
+    "region": "us-central1",
+    "api_config": {}
+  },
+  
+  "cloud_storage": {
+    "region": "us-central1",
+    "buckets": {}
+  },
+  
+  "pub_sub": {
+    "region": "us-central1",
+    "topics": {},
+    "subscriptions": {}
+  },
+  
+  "identity_platform": {
+    "region": "us-central1",
+    "identity_platform_config": {}
+  },
+  
+  "cloud_kms": {
+    "region": "us-central1",
+    "keyrings": {}
+  },
+  
+  "monitoring": {
+    "region": "us-central1",
+    "monitoring_config": {}
+  }
+} 

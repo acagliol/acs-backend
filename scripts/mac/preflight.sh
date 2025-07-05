@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 # Script configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-CONFIG_FILE="$PROJECT_ROOT/config/environments.json"
+
 ENVIRONMENTS=("dev" "staging" "prod")
 
 # Preflight results
@@ -62,15 +62,17 @@ EOF
 # Function to load environment configuration
 load_environment_config() {
     local env="$1"
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
+    local env_config_file="$PROJECT_ROOT/environments/$env.json"
+    
+    if [[ ! -f "$env_config_file" ]]; then
+        print_error "Environment configuration file not found: $env_config_file"
         return 1
     fi
     if command -v jq &> /dev/null; then
         local config
-        config=$(jq -r ".environments.$env" "$CONFIG_FILE" 2>/dev/null)
-        if [[ "$config" == "null" ]] || [[ -z "$config" ]]; then
-            print_error "Environment '$env' not found in configuration file"
+        config=$(cat "$env_config_file" 2>/dev/null)
+        if [[ -z "$config" ]]; then
+            print_error "Failed to read environment configuration file"
             return 1
         fi
         echo "$config"
@@ -127,7 +129,7 @@ check_gcloud_auth() {
     local active_account=$(gcloud auth list --filter=status:ACTIVE --format="value(account)")
     print_status "Active account: $active_account"
     
-    # Get project ID from config
+    # Get project configuration from config
     local env_config
     env_config=$(load_environment_config "$env")
     if [[ $? -ne 0 ]]; then
@@ -135,14 +137,29 @@ check_gcloud_auth() {
     fi
     
     local project_id
+    local project_name
     if command -v jq &> /dev/null; then
         project_id=$(echo "$env_config" | jq -r '.project_id')
+        project_name=$(echo "$env_config" | jq -r '.project_name')
     else
-        case "$env" in
-            dev) project_id="terraform-anay-dev" ;;
-            staging) project_id="terraform-anay-staging" ;;
-            prod) project_id="terraform-anay-prod" ;;
-        esac
+        # Load from environment JSON file instead of hardcoding
+        local env_config_file="$PROJECT_ROOT/environments/$env.json"
+        if [[ -f "$env_config_file" ]]; then
+            project_id=$(cat "$env_config_file" | jq -r '.project_id')
+            project_name=$(cat "$env_config_file" | jq -r '.project_name')
+        else
+            print_error "Environment configuration file not found: $env_config_file"
+            return 1
+        fi
+    fi
+    
+    # Check if active project matches expected project ID
+    local active_project
+    active_project=$(gcloud config get-value project 2>/dev/null | tr -d '\r\n')
+    if [[ "$active_project" != "$project_id" ]]; then
+        print_error "Active gcloud project ($active_project) does not match environment project_id ($project_id)."
+        print_error "Run: gcloud config set project $project_id"
+        return 1
     fi
     
     if [[ -n "$project_id" ]]; then
@@ -171,7 +188,7 @@ check_environment_files() {
     fi
     
     # Check for required files in project root
-    local required_files=("main.tf" "variables.tf")
+    local required_files=("main-independent.tf" "main-dependent.tf" "variables.tf")
     for file in "${required_files[@]}"; do
         if [[ ! -f "$PROJECT_ROOT/$file" ]]; then
             print_error "Required file not found: $PROJECT_ROOT/$file"
@@ -191,10 +208,10 @@ check_sensitive_info() {
     
     cd "$PROJECT_ROOT"
     
-    # Check for hardcoded secrets in main.tf
-    if [[ -f "main.tf" ]]; then
-        if grep -q -i "password\|secret\|key\|token\|api_key" main.tf; then
-            print_error "Sensitive information found in main.tf"
+    # Check for hardcoded secrets in main-independent.tf and main-dependent.tf
+    if [[ -f "main-independent.tf" ]]; then
+        if grep -q -i "password\|secret\|key\|token\|api_key" main-independent.tf; then
+            print_error "Sensitive information found in main-independent.tf"
             print_error "Use environment variables or secret management instead"
             return 1
         fi

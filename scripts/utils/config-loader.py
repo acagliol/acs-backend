@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Configuration loader utility for Terraform environment management.
-This script loads environment configurations from config/environments.json
+This script loads environment configurations from environments/{env}.json files
 and provides functions to access environment-specific settings.
 """
 
@@ -20,7 +20,7 @@ def get_project_root():
 
 def load_config():
     """Load the environments configuration file."""
-    config_file = get_project_root() / "config" / "environments.json"
+    config_file = get_project_root() / "environments" / "dev.json"
     
     if not config_file.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_file}")
@@ -34,31 +34,43 @@ def load_config():
 
 def get_environment_config(env_name):
     """Get configuration for a specific environment."""
-    config = load_config()
+    config_file = get_project_root() / "environments" / f"{env_name}.json"
     
-    if env_name not in config.get('environments', {}):
-        raise ValueError(f"Environment '{env_name}' not found in configuration")
+    if not config_file.exists():
+        raise FileNotFoundError(f"Environment configuration file not found: {config_file}")
     
-    return config['environments'][env_name]
+    try:
+        with open(config_file, 'r') as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in environment configuration file: {e}")
 
 
 def get_defaults():
     """Get default configuration values."""
-    config = load_config()
-    return config.get('defaults', {})
+    # Defaults are now defined in individual environment JSON files
+    return {}
 
 
 def list_environments():
     """List all available environments."""
-    config = load_config()
-    return list(config.get('environments', {}).keys())
+    environments_dir = get_project_root() / "environments"
+    
+    if not environments_dir.exists():
+        return []
+    
+    environments = []
+    for file in environments_dir.glob("*.json"):
+        environments.append(file.stem)
+    
+    return environments
 
 
 def validate_environment(env_name):
     """Validate that an environment exists and has required fields."""
     try:
         env_config = get_environment_config(env_name)
-        required_fields = ['project_id', 'bucket_name', 'region', 'zone', 'machine_type', 'subnet_cidr', 'disk_size']
+        required_fields = ['project_id', 'project_name', 'region', 'zone']
         
         missing_fields = [field for field in required_fields if field not in env_config]
         if missing_fields:
@@ -111,8 +123,8 @@ def main():
                 return 1
         
         elif command == "defaults":
-            defaults = get_defaults()
-            print(json.dumps(defaults, indent=2))
+            print("Default values are now defined in individual environment JSON files")
+            print("Use 'get <environment>' to view specific environment configuration")
         
         else:
             print(f"Unknown command: {command}")

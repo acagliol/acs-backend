@@ -15,45 +15,39 @@ NC='\033[0m' # No Color
 # Script configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-CONFIG_FILE="$PROJECT_ROOT/config/environments.json"
+
 ENVIRONMENTS=("dev" "staging" "prod")
 
 # Function to load environment configuration
 load_environment_config() {
     local env="$1"
+    local env_config_file="$PROJECT_ROOT/environments/$env.json"
     
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
+    if [[ ! -f "$env_config_file" ]]; then
+        print_error "Environment configuration file not found: $env_config_file"
         exit 1
     fi
     
     # Use jq to parse JSON if available, otherwise use a simple grep approach
     if command -v jq &> /dev/null; then
         local config
-        config=$(jq -r ".environments.$env" "$CONFIG_FILE" 2>/dev/null)
-        if [[ "$config" == "null" ]] || [[ -z "$config" ]]; then
-            print_error "Environment '$env' not found in configuration file"
+        config=$(cat "$env_config_file" 2>/dev/null)
+        if [[ -z "$config" ]]; then
+            print_error "Failed to read environment configuration file"
             exit 1
         fi
         echo "$config"
     else
         print_warning "jq not found, using fallback configuration parsing"
         # Fallback: extract values using grep/sed (less robust)
-        case "$env" in
-            dev)
-                echo '{"project_id":"terraform-anay-dev","bucket_name":"terraform-state-dev-anay","region":"us-central1","zone":"us-central1-c","machine_type":"e2-micro","subnet_cidr":"10.0.1.0/24","disk_size":20}'
-                ;;
-            staging)
-                echo '{"project_id":"terraform-anay-staging","bucket_name":"terraform-state-staging-anay","region":"us-central1","zone":"us-central1-c","machine_type":"e2-small","subnet_cidr":"10.0.2.0/24","disk_size":20}'
-                ;;
-            prod)
-                echo '{"project_id":"terraform-anay-prod","bucket_name":"terraform-state-prod-anay","region":"us-central1","zone":"us-central1-c","machine_type":"e2-standard-2","subnet_cidr":"10.0.3.0/24","disk_size":50}'
-                ;;
-            *)
-                print_error "Environment '$env' not found in configuration file"
-                exit 1
-                ;;
-        esac
+        # Load from environment JSON file instead of hardcoding
+        local env_config_file="$PROJECT_ROOT/environments/$env.json"
+        if [[ -f "$env_config_file" ]]; then
+            cat "$env_config_file"
+        else
+            print_error "Environment configuration file not found: $env_config_file"
+            exit 1
+        fi
     fi
 }
 
@@ -158,14 +152,14 @@ create_environment_directory() {
     print_success "Environment directory created"
 }
 
-# Function to create main.tf
+# Function to create main-independent.tf and main-dependent.tf
 create_main_tf() {
     local env="$1"
     local env_dir="$2"
     
-    print_status "Creating main.tf for $env environment..."
+    print_status "Creating main-independent.tf and main-dependent.tf for $env environment..."
     
-    cat > "$env_dir/main.tf" << EOF
+    cat > "$env_dir/main-independent.tf" << EOF
 provider "google" {
   project = var.project_id
   region  = var.region
@@ -264,7 +258,7 @@ output "subnet_name" {
 }
 EOF
     
-    print_success "main.tf created"
+    print_success "main-independent.tf created"
 }
 
 # Function to create variables.tf
@@ -381,32 +375,19 @@ create_tfvars() {
         disk_size=$(echo "$env_config" | jq -r '.disk_size')
     else
         # Fallback parsing (less robust)
-        case "$env" in
-            dev)
-                project_id="terraform-anay-dev"
-                region="us-central1"
-                zone="us-central1-c"
-                machine_type="e2-micro"
-                subnet_cidr="10.0.1.0/24"
-                disk_size=20
-                ;;
-            staging)
-                project_id="terraform-anay-staging"
-                region="us-central1"
-                zone="us-central1-c"
-                machine_type="e2-small"
-                subnet_cidr="10.0.2.0/24"
-                disk_size=20
-                ;;
-            prod)
-                project_id="terraform-anay-prod"
-                region="us-central1"
-                zone="us-central1-c"
-                machine_type="e2-standard-2"
-                subnet_cidr="10.0.3.0/24"
-                disk_size=50
-                ;;
-        esac
+        # Load from environment JSON file instead of hardcoding
+        local env_config_file="$PROJECT_ROOT/environments/$env.json"
+        if [[ -f "$env_config_file" ]]; then
+            project_id=$(cat "$env_config_file" | jq -r '.project_id')
+            region=$(cat "$env_config_file" | jq -r '.region')
+            zone=$(cat "$env_config_file" | jq -r '.zone')
+            machine_type=$(cat "$env_config_file" | jq -r '.machine_type')
+            subnet_cidr=$(cat "$env_config_file" | jq -r '.subnet_cidr')
+            disk_size=$(cat "$env_config_file" | jq -r '.disk_size')
+        else
+            print_error "Environment configuration file not found: $env_config_file"
+            exit 1
+        fi
     fi
     
     cat > "$env_dir/terraform.tfvars" << EOF
@@ -443,18 +424,14 @@ create_backend_tf() {
     if command -v jq &> /dev/null; then
         bucket_name=$(echo "$env_config" | jq -r '.bucket_name')
     else
-        # Fallback parsing
-        case "$env" in
-            dev)
-                bucket_name="terraform-state-dev-anay"
-                ;;
-            staging)
-                bucket_name="terraform-state-staging-anay"
-                ;;
-            prod)
-                bucket_name="terraform-state-prod-anay"
-                ;;
-        esac
+        # Load from environment JSON file instead of hardcoding
+        local env_config_file="$PROJECT_ROOT/environments/$env.json"
+        if [[ -f "$env_config_file" ]]; then
+            bucket_name=$(cat "$env_config_file" | jq -r '.bucket_name')
+        else
+            print_error "Environment configuration file not found: $env_config_file"
+            exit 1
+        fi
     fi
     
     cat > "$env_dir/backend.tf" << EOF
@@ -541,7 +518,8 @@ This directory contains the Terraform configuration for the **$env** environment
 
 ## Files
 
-- \`main.tf\` - Main Terraform configuration
+- \`main-independent.tf\` - Phase 1: Independent resources (database, storage, networking)
+- \`main-dependent.tf\` - Phase 2: Dependent resources (modules, functions, monitoring)
 - \`variables.tf\` - Variable definitions
 - \`terraform.tfvars\` - Environment-specific variable values
 - \`backend.tf\` - Remote state configuration

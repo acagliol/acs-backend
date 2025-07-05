@@ -11,14 +11,14 @@ This guide provides instructions for AI agents (like Cursor, GitHub Copilot, etc
 ## Project Structure Rules
 
 ### Directory Organization
-- **USE** a single `main.tf` file for all resource definitions
+- **USE** `main-independent.tf` for Phase 1 resources and `main-dependent.tf` for Phase 2 resources
 - **ORGANIZE** environment-specific settings in `environments/{env}.json` files
 - **PLACE** variable declarations in `variables.tf`
 - **KEEP** backend configuration in `backend.tf`
 - **STORE** deployment scripts in `scripts/` directory
 
 ### File Naming Conventions
-- Main configuration: `main.tf`, `variables.tf`, `backend.tf`
+- Main configuration: `main-independent.tf`, `main-dependent.tf`, `variables.tf`, `backend.tf`
 - Environment configurations: `environments/{environment}.json`
 - Deployment scripts: `deploy.ps1`, `deploy.sh`
 
@@ -95,7 +95,7 @@ output "ips" {
 {
   "environment": "dev",
   "project_id": "terraform-anay-dev",
-  "bucket_name": "terraform-state-dev-anay",
+  "bucket_name": "tf-state-{env}",
   "region": "us-central1",
   "zone": "us-central1-c",
   "machine_type": "e2-micro",
@@ -341,7 +341,7 @@ resource "google_monitoring_uptime_check_config" "web_uptime" {
 ## Error Prevention
 
 ### Common Mistakes to Avoid
-1. **NEVER** hardcode project IDs or region names in main.tf
+1. **NEVER** hardcode project IDs or region names in main-independent.tf or main-dependent.tf
 2. **NEVER** use `terraform destroy` without explicit confirmation
 3. **NEVER** commit sensitive information to version control
 4. **NEVER** skip testing in staging before production
@@ -431,7 +431,8 @@ This document outlines the plan for setting up a company-wide Terraform backend 
 
 ```
 terraform-anay-test/
-├── main.tf                    # Single Terraform configuration
+├── main-independent.tf        # Phase 1: Independent resources
+├── main-dependent.tf          # Phase 2: Dependent resources
 ├── variables.tf               # Variable declarations
 ├── backend.tf                 # Backend configuration template
 ├── environments/              # Environment-specific configurations
@@ -461,7 +462,7 @@ terraform-anay-test/
 ## Architecture Overview
 
 ### Single Configuration, Multiple Environments
-- **One Terraform Configuration**: `main.tf` contains all resource definitions
+- **Two-Phase Configuration**: `main-independent.tf` and `main-dependent.tf` contain resource definitions
 - **Dynamic Environment Loading**: Environment-specific settings loaded from JSON files
 - **Conditional Resource Creation**: Resources created based on environment requirements
 - **Centralized State Management**: Each environment uses separate state files in GCS

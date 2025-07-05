@@ -6,8 +6,10 @@ A comprehensive Terraform infrastructure project that uses a modular approach to
 
 ```
 terraform-anay-test/
-├── main.tf                    # Main Terraform configuration with modules
+├── main-independent.tf        # Phase 1: Independent resources (database, storage, networking)
+├── main-dependent.tf          # Phase 2: Dependent resources (modules, functions, monitoring)
 ├── backend.tf                 # Backend configuration template
+```
 ├── config/
 │   └── environments.json      # Environment configurations
 ├── environments/              # Environment-specific configurations
@@ -156,7 +158,7 @@ python scripts/run setup-env dev
 gcloud config set project acs-dev
 
 # 2. Make changes to Terraform files
-# Edit main.tf, variables.tf, etc.
+# Edit main-independent.tf, main-dependent.tf, variables.tf, etc.
 
 # 3. Validate changes
 python scripts/run validate dev
@@ -172,7 +174,7 @@ python scripts/run deploy dev
 
 ```bash
 # 1. Set correct project
-gcloud config set project terraform-anay-staging  # or terraform-anay-prod
+gcloud config set project acs-staging-464702  # or acs-prod-464702
 
 # 2. Validate configuration
 python scripts/run validate staging
@@ -207,8 +209,8 @@ The project supports three environments with different configurations:
 | Environment | Project ID | Machine Type | Purpose |
 |-------------|------------|--------------|---------|
 | `dev` | `acs-dev` | `e2-micro` | Development & testing |
-| `staging` | `terraform-anay-staging` | `e2-small` | Pre-production testing |
-| `prod` | `terraform-anay-prod` | `e2-standard-2` | Production |
+| `staging` | `acs-staging-464702` | `e2-small` | Pre-production testing |
+| `prod` | `acs-prod-464702` | `e2-standard-2` | Production |
 
 ### Environment-Specific Settings
 
@@ -321,8 +323,8 @@ Each environment has its own:
 ```bash
 # Fix: Set the correct project for your environment
 gcloud config set project acs-dev              # for dev
-gcloud config set project terraform-anay-staging  # for staging
-gcloud config set project terraform-anay-prod     # for prod
+gcloud config set project acs-staging-464702  # for staging
+gcloud config set project acs-prod-464702     # for prod
 ```
 
 #### "Terraform validation failed"

@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 # Script configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-CONFIG_FILE="$PROJECT_ROOT/config/environments.json"
+
 ENVIRONMENTS=("dev" "staging" "prod")
 
 # Function to print colored output
@@ -81,15 +81,17 @@ check_dependencies() {
 # Function to load environment configuration
 load_environment_config() {
     local env="$1"
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "Configuration file not found: $CONFIG_FILE"
+    local env_config_file="$PROJECT_ROOT/environments/$env.json"
+    
+    if [[ ! -f "$env_config_file" ]]; then
+        print_error "Environment configuration file not found: $env_config_file"
         exit 1
     fi
     if command -v jq &> /dev/null; then
         local config
-        config=$(jq -r ".environments.$env" "$CONFIG_FILE" 2>/dev/null)
-        if [[ "$config" == "null" ]] || [[ -z "$config" ]]; then
-            print_error "Environment '$env' not found in configuration file"
+        config=$(cat "$env_config_file" 2>/dev/null)
+        if [[ -z "$config" ]]; then
+            print_error "Failed to read environment configuration file"
             exit 1
         fi
         echo "$config"
@@ -120,9 +122,9 @@ check_environment_exists() {
         exit 1
     fi
     
-    # Check if main.tf exists in project root
-    if [[ ! -f "$PROJECT_ROOT/main.tf" ]]; then
-        print_error "main.tf not found in project root"
+    # Check if main-independent.tf exists in project root
+    if [[ ! -f "$PROJECT_ROOT/main-independent.tf" ]]; then
+        print_error "main-independent.tf not found in project root"
         exit 1
     fi
 }
@@ -232,16 +234,7 @@ perform_rollback() {
     # Get environment configuration for backend setup
     local env_config
     env_config=$(load_environment_config "$env")
-    local bucket_name
-    if command -v jq &> /dev/null; then
-        bucket_name=$(echo "$env_config" | jq -r '.bucket_name')
-    else
-        case "$env" in
-            dev) bucket_name="terraform-state-dev-anay" ;;
-            staging) bucket_name="terraform-state-staging-anay" ;;
-            prod) bucket_name="terraform-state-prod-anay" ;;
-        esac
-    fi
+    local bucket_name="tf-state-$env"
     
     # Initialize Terraform if needed
     if [[ ! -d ".terraform" ]]; then
@@ -279,7 +272,7 @@ restore_from_backup() {
     echo
     echo "cd $PROJECT_ROOT"
     echo "cp $backup_dir/terraform.tfstate ."
-    echo "terraform init -backend-config=\"bucket=$(echo "$(load_environment_config "$env")" | jq -r '.bucket_name' 2>/dev/null || echo "terraform-state-$env-anay")\" -backend-config=\"prefix=terraform/state\""
+    echo "terraform init -backend-config=\"bucket=tf-state-$env\" -backend-config=\"prefix=terraform/state\""
     echo "terraform plan -var=\"environment=$env\""
     echo "terraform apply -var=\"environment=$env\""
     echo

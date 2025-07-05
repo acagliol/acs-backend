@@ -44,7 +44,7 @@ Create environment-specific JSON files in `environments/`:
   "region": "us-central1",
   
   "firestore": {
-    "database_id": "(default)",
+    "database_id": "<name>",
     "collections": {
       "users": {
         "name": "users",
@@ -132,7 +132,7 @@ terraform apply -var="environment=prod"
 ```json
 {
   "firestore": {
-    "database_id": "(default)",
+    "database_id": "<name>",
     "location_id": "us-central1",
     "database_type": "FIRESTORE_NATIVE",
     "collections": {

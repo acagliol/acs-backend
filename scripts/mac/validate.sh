@@ -108,8 +108,8 @@ validate_environment_directory() {
         return 1
     fi
     
-    if [[ ! -f "$env_dir/main.tf" ]]; then
-        print_error "main.tf not found in $env_dir"
+    if [[ ! -f "$env_dir/main-independent.tf" ]]; then
+    print_error "main-independent.tf not found in $env_dir"
         return 1
     fi
     
@@ -345,14 +345,14 @@ validate_environment_config() {
     cd "$env_dir"
     
     # Check for environment-specific naming
-    if grep -q "\${var.environment}" main.tf; then
+    if grep -q "\${var.environment}" main-independent.tf; then
         print_success "Environment-aware naming found in $env"
     else
         print_warning "Environment-aware naming not found in $env"
     fi
     
     # Check for proper tagging
-    if grep -q "tags\s*=" main.tf; then
+    if grep -q "tags\s*=" main-independent.tf; then
         print_success "Resource tagging found in $env"
     else
         print_warning "Resource tagging not found in $env"

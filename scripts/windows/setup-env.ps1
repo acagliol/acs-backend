@@ -13,28 +13,24 @@ param(
 # Script configuration
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $ScriptDir)
-$ConfigFile = Join-Path $ProjectRoot "config\environments.json"
 $Environments = @("dev", "staging", "prod")
 
 # Function to load environment configuration
 function Get-EnvironmentConfig {
     param([string]$env)
     
-    if (-not (Test-Path $ConfigFile)) {
-        Write-Error "Configuration file not found: $ConfigFile"
+    $envConfigFile = Join-Path $ProjectRoot "environments\$env.json"
+    
+    if (-not (Test-Path $envConfigFile)) {
+        Write-Error "Environment configuration file not found: $envConfigFile"
         exit 1
     }
     
     try {
-        $config = Get-Content $ConfigFile | ConvertFrom-Json
-        if ($config.environments.$env) {
-            return $config.environments.$env
-        } else {
-            Write-Error "Environment '$env' not found in configuration file"
-            exit 1
-        }
+        $config = Get-Content $envConfigFile | ConvertFrom-Json
+        return $config
     } catch {
-        Write-Error "Failed to load configuration file: $($_.Exception.Message)"
+        Write-Error "Failed to load environment configuration file: $($_.Exception.Message)"
         exit 1
     }
 }
@@ -134,14 +130,14 @@ function New-EnvironmentDirectory {
     return $true
 }
 
-# Function to create main.tf
+# Function to create main-independent.tf and main-dependent.tf
 function New-MainTF {
     param(
         [string]$env,
         [string]$envDir
     )
     
-    Write-Status "Creating main.tf for $env environment..."
+    Write-Status "Creating main-independent.tf and main-dependent.tf for $env environment..."
     
     $mainContent = @"
 provider "google" {
@@ -242,8 +238,8 @@ output "subnet_name" {
 }
 "@
     
-    $mainContent | Out-File -FilePath (Join-Path $envDir "main.tf") -Encoding UTF8
-    Write-Success "main.tf created"
+    $mainContent | Out-File -FilePath (Join-Path $envDir "main-independent.tf") -Encoding UTF8
+    Write-Success "main-independent.tf created"
 }
 
 # Function to create variables.tf
@@ -477,7 +473,8 @@ This directory contains the Terraform configuration for the **$env** environment
 
 ## Files
 
-- `main.tf` - Main Terraform configuration
+- `main-independent.tf` - Phase 1: Independent resources (database, storage, networking)
+- `main-dependent.tf` - Phase 2: Dependent resources (modules, functions, monitoring)
 - `variables.tf` - Variable definitions
 - `terraform.tfvars` - Environment-specific variable values
 - `backend.tf` - Remote state configuration

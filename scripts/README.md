@@ -10,7 +10,7 @@ Simple, cross-platform scripts for deploying Terraform infrastructure to dev, st
 python scripts/run setup-env dev
 
 # Set your Google Cloud project
-gcloud config set project terraform-anay-dev
+gcloud config set project acs-dev-464702
 ```
 
 ### 2. Deploy to Development
@@ -25,7 +25,7 @@ python scripts/run deploy dev
 ### 3. Deploy to Staging/Production
 ```bash
 # Set the correct project
-gcloud config set project terraform-anay-staging  # or terraform-anay-prod
+gcloud config set project acs-staging-464702  # or acs-prod-464702
 
 # Validate and deploy
 python scripts/run validate staging
@@ -62,10 +62,10 @@ python scripts/run <command> [environment] [options]
 ```bash
 # 1. Set up environment (first time only)
 python scripts/run setup-env dev
-gcloud config set project terraform-anay-dev
+gcloud config set project acs-dev-464702
 
 # 2. Make changes to Terraform files
-# Edit main.tf, variables.tf, etc.
+# Edit main-independent.tf, main-dependent.tf, variables.tf, etc.
 
 # 3. Validate changes
 python scripts/run validate dev
@@ -106,9 +106,12 @@ terraform-anay-test/
 │   ├── mac/                   # macOS/Linux scripts
 │   ├── windows/               # Windows PowerShell scripts
 │   └── utils/                 # Configuration utilities
-├── config/
-│   └── environments.json      # Environment configurations
-├── main.tf                    # Main Terraform configuration
+├── environments/              # Environment-specific configurations
+│   ├── dev.json              # Development environment settings
+│   ├── staging.json          # Staging environment settings
+│   └── prod.json             # Production environment settings
+├── main-independent.tf        # Phase 1: Independent resources
+├── main-dependent.tf          # Phase 2: Dependent resources
 ├── variables.tf               # Variable definitions
 ├── backend.tf                 # Backend configuration
 └── versions.tf                # Provider versions
@@ -162,19 +165,19 @@ sudo apt-get install python3 python3-pip
 # Authenticate with Google Cloud
 gcloud auth login
 
-# Set your project (replace with your project ID)
-gcloud config set project terraform-anay-dev
+# Set your project (replace with your project name)
+gcloud config set project acs-dev
 ```
 
 ## 🔧 Environment Configuration
 
 The project supports three environments with different configurations:
 
-| Environment | Project ID | Machine Type | Purpose |
-|-------------|------------|--------------|---------|
-| `dev` | `terraform-anay-dev` | `e2-micro` | Development & testing |
-| `staging` | `terraform-anay-staging` | `e2-small` | Pre-production testing |
-| `prod` | `terraform-anay-prod` | `e2-standard-2` | Production |
+| Environment | Project Name | Project ID | Machine Type | Purpose |
+|-------------|--------------|------------|--------------|---------|
+| `dev` | `acs-dev` | `acs-dev-464702` | `e2-micro` | Development & testing |
+| `staging` | `acs-staging` | `acs-staging-464702` | `e2-small` | Pre-production testing |
+| `prod` | `acs-prod` | `acs-prod-464702` | `e2-standard-2` | Production |
 
 ### Environment-Specific Settings
 
@@ -190,9 +193,9 @@ Each environment has its own:
 #### "Active gcloud project does not match"
 ```bash
 # Fix: Set the correct project for your environment
-gcloud config set project terraform-anay-dev      # for dev
-gcloud config set project terraform-anay-staging  # for staging
-gcloud config set project terraform-anay-prod     # for prod
+gcloud config set project acs-dev      # for dev
+gcloud config set project acs-staging  # for staging
+gcloud config set project acs-prod     # for prod
 ```
 
 #### "Terraform validation failed"
@@ -209,7 +212,7 @@ python scripts/run validate dev
 #### "GCS bucket not found"
 ```bash
 # Fix: Ensure the state bucket exists in your GCP project
-# Bucket names: terraform-state-dev-anay, terraform-state-staging-anay, terraform-state-prod-anay
+# Bucket names: tf-state-dev, tf-state-prod, tf-state-staging
 ```
 
 #### "Permission denied"
@@ -245,7 +248,7 @@ ls backups/
 ## 📝 Best Practices
 
 ### Before Deployment
-1. ✅ **Set correct GCP project**: `gcloud config set project terraform-anay-[env]`
+1. ✅ **Set correct GCP project**: `gcloud config set project acs-[env]`
 2. ✅ **Validate configuration**: `python scripts/run validate [env]`
 3. ✅ **Test with dry-run**: `python scripts/run deploy [env] --dry-run`
 4. ✅ **Review the plan** carefully before applying
@@ -271,28 +274,261 @@ ls backups/
 
 ## 📄 Configuration Reference
 
-### Environment Configuration (`config/environments.json`)
+### Environment Configuration (`environments/{env}.json`)
 ```json
 {
-  "environments": {
-    "dev": {
-      "project_id": "terraform-anay-dev",
-      "bucket_name": "terraform-state-dev-anay",
-      "region": "us-central1",
-      "zone": "us-central1-c",
-      "machine_type": "e2-micro",
-      "subnet_cidr": "10.0.1.0/24",
-      "disk_size": 20
-    }
+  "environment": "dev",
+  "project_id": "acs-dev-464702",
+  "project_name": "acs-dev",
+  "region": "us-central1",
+  "zone": "us-central1-c",
+  "firestore": {
+    "database_id": "<name>",
+    "location_id": "us-central1",
+    "database_type": "FIRESTORE_NATIVE"
+  },
+  "cloud_functions": {
+    "region": "us-central1",
+    "functions": {}
   }
 }
 ```
 
 ### Backend Configuration
 - **State Storage**: Google Cloud Storage buckets
-- **State Location**: `gs://terraform-state-[env]-anay/terraform/state`
+- **State Location**: `gs://tf-state-{environment}/terraform/state`
 - **Locking**: Automatic state locking via GCS
 
 ---
 
 **Need help?** Check the troubleshooting section above or contact your infrastructure team. 
+
+# Deployment Scripts
+
+This directory contains deployment scripts for different operating systems that handle Terraform deployments to various environments.
+
+## Quick Start
+
+### Using the main runner script (recommended)
+```bash
+# Deploy both phases to dev environment
+python scripts/run deploy dev
+
+# Deploy only Phase 1 to dev environment
+python scripts/run deploy dev --phase1
+
+# Deploy only Phase 2 to dev environment
+python scripts/run deploy dev --phase2
+
+# Dry run to see what would be deployed
+python scripts/run deploy dev --dry-run
+
+# Deploy to production (requires confirmation)
+python scripts/run deploy prod --force
+```
+
+### Direct script usage
+
+#### Windows (PowerShell)
+```powershell
+# Deploy both phases to dev environment
+.\scripts\windows\deploy.ps1 dev
+
+# Deploy only Phase 1 to dev environment
+.\scripts\windows\deploy.ps1 dev -Phase1
+
+# Deploy only Phase 2 to dev environment
+.\scripts\windows\deploy.ps1 dev -Phase2
+
+# Dry run to see what would be deployed
+.\scripts\windows\deploy.ps1 dev -DryRun
+
+# Deploy to production (requires confirmation)
+.\scripts\windows\deploy.ps1 prod -Force
+```
+
+#### Linux/macOS
+```bash
+# Deploy both phases to dev environment
+./scripts/linux/deploy.sh dev
+
+# Deploy only Phase 1 to dev environment
+./scripts/linux/deploy.sh dev --phase1
+
+# Deploy only Phase 2 to dev environment
+./scripts/linux/deploy.sh dev --phase2
+
+# Dry run to see what would be deployed
+./scripts/linux/deploy.sh dev --dry-run
+
+# Deploy to production (requires confirmation)
+./scripts/linux/deploy.sh prod --force
+```
+
+## Deployment Phases
+
+The deployment is split into two phases to handle dependencies properly:
+
+### Phase 1: Independent Resources (`main-independent.tf`)
+- **Purpose**: Deploy foundational infrastructure that other resources depend on
+- **Resources**: 
+  - Google Cloud Project setup
+  - VPC and networking
+  - Firestore database
+  - IAM roles and service accounts
+  - Cloud Storage buckets
+  - Cloud KMS keys
+  - Basic monitoring setup
+
+### Phase 2: Dependent Resources (`main-dependent.tf`)
+- **Purpose**: Deploy resources that depend on Phase 1 infrastructure
+- **Resources**:
+  - Firestore indexes (can take 15-45 minutes)
+  - Cloud Functions
+  - API Gateway
+  - Pub/Sub topics and subscriptions
+  - Advanced monitoring and alerting
+  - Identity Platform configuration
+
+## Why Two Phases?
+
+1. **Dependency Management**: Some resources (like Firestore indexes) depend on the database being created first
+2. **Time Management**: Firestore indexes can take 15-45 minutes to create, so separating them allows for better progress tracking
+3. **Error Isolation**: If Phase 2 fails, Phase 1 resources remain intact
+4. **Rollback Capability**: Easier to rollback specific phases if needed
+
+## Environment-Specific Behavior
+
+### Development Environment
+- **Access**: Full developer access
+- **Confirmation**: Minimal prompts
+- **Rollback**: Automated rollback available
+- **Testing**: Ideal for testing new features
+
+### Staging Environment
+- **Access**: Developer access with approval
+- **Confirmation**: Standard confirmation prompts
+- **Rollback**: Automated rollback available
+- **Testing**: Mirrors production configuration
+
+### Production Environment
+- **Access**: Admin access only
+- **Confirmation**: Requires typing "PRODUCTION" to confirm
+- **Rollback**: Manual rollback process
+- **Protection**: Resources have `prevent_destroy` lifecycle rules
+
+## Common Use Cases
+
+### Initial Setup
+```bash
+# Deploy both phases to dev first
+python scripts/run deploy dev
+
+# Then deploy to staging
+python scripts/run deploy staging
+
+# Finally deploy to production (admin only)
+python scripts/run deploy prod
+```
+
+### Adding New Features
+```bash
+# Test in dev first
+python scripts/run deploy dev --phase1
+python scripts/run deploy dev --phase2
+
+# Then deploy to staging
+python scripts/run deploy staging
+```
+
+### Infrastructure Updates
+```bash
+# Update only networking (Phase 1)
+python scripts/run deploy dev --phase1
+
+# Update only application resources (Phase 2)
+python scripts/run deploy dev --phase2
+```
+
+### Troubleshooting
+```bash
+# See what would be deployed without making changes
+python scripts/run deploy dev --dry-run
+
+# Check specific phase
+python scripts/run deploy dev --phase1 --dry-run
+```
+
+## Safety Features
+
+### Pre-deployment Checks
+- Validates environment configuration
+- Checks gcloud project matches environment
+- Verifies Terraform configuration
+- Runs preflight checks
+
+### State Management
+- Automatic state backup before deployment
+- Separate state files per environment
+- State locking to prevent concurrent modifications
+
+### Production Protection
+- Requires explicit "PRODUCTION" confirmation
+- Resources have `prevent_destroy` lifecycle rules
+- Admin-only access to production
+- Comprehensive audit logging
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"Terraform not initialized"**
+   ```bash
+   terraform init
+   ```
+
+2. **"Active gcloud project does not match"**
+   ```bash
+   gcloud config set project <project-id>
+   ```
+
+3. **"Environment configuration file not found"**
+   - Check that `environments/<env>.json` exists
+   - Verify the environment name is correct
+
+4. **"Phase 2 fails after Phase 1"**
+   - Check that Firestore database is ready
+   - Verify all Phase 1 resources are properly created
+   - Check for any dependency issues
+
+### Getting Help
+
+```bash
+# Show usage information
+python scripts/run deploy --help
+
+# Show detailed help for specific environment
+python scripts/run deploy dev --help
+```
+
+## Script Structure
+
+```
+scripts/
+├── run                    # Main runner script (cross-platform)
+├── windows/              # Windows-specific scripts
+│   ├── deploy.ps1       # PowerShell deployment script
+│   ├── preflight.ps1    # Pre-deployment checks
+│   ├── backup-state.ps1 # State backup utility
+│   └── rollback.ps1     # Rollback utility
+├── linux/               # Linux-specific scripts
+│   ├── deploy.sh        # Bash deployment script
+│   ├── preflight.sh     # Pre-deployment checks
+│   ├── backup-state.sh  # State backup utility
+│   └── rollback.sh      # Rollback utility
+└── mac/                 # macOS-specific scripts
+    ├── deploy.sh        # Bash deployment script
+    ├── preflight.sh     # Pre-deployment checks
+    ├── backup-state.sh  # State backup utility
+    └── rollback.sh      # Rollback utility
+``` 

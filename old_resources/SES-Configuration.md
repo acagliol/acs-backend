@@ -299,8 +299,8 @@ _dmarc.example.com. IN TXT "v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com
 ### Account Limits
 - **Sandbox Mode**: 200 emails per day, 1 email per second
 - **Production Mode**: Based on account reputation
-- **Request Limit**: 14 emails per second (default)
-- **Daily Limit**: 50,000 emails per day (default)
+- **Request Limit**: 14 emails per second <name>
+- **Daily Limit**: 50,000 emails per day <name>
 
 ### Reputation-Based Scaling
 - **Good Reputation**: Higher sending limits

@@ -1,547 +1,739 @@
-# ACS Lead Conversion Pipeline - GCP Backend Infrastructure Plan
+# Backend Resource Descriptions for Terraform Infrastructure
 
-## Executive Summary
+## Overview
 
-This plan outlines a modern, scalable, and secure backend infrastructure for the ACS Lead Conversion Pipeline on Google Cloud Platform. The architecture leverages GCP's native services to create a more efficient, secure, and robust system compared to the current AWS implementation.
+This document provides detailed descriptions of all backend resources in the Terraform infrastructure project, which uses a **2-step deployment approach** with files organized in the project root.
 
-## Current State Analysis
+## Project Architecture
 
-### AWS Infrastructure (Old)
-- **30+ Lambda Functions** handling various LCP operations
-- **DynamoDB** with 13 tables for data storage
-- **SQS/SNS** for message queuing and email processing
-- **SES** for email sending/receiving
-- **Cognito** for authentication
-- **S3** for file storage
-- **API Gateway** for REST endpoints
+### 2-Step Deployment Structure
+- **Phase 1** (`main-independent.tf`): Independent resources (APIs, service accounts, IAM)
+- **Phase 2** (`main-dependent.tf`): Dependent resources (Firestore, modules, indexes)
+- **Root Files**: `versions.tf`, `providers.tf`, `variables.tf`, `backend.tf` in project root
 
-### Key LCP Components Identified
-1. **EV Scoring System** - 12 LLMs analyzing engagement value (0-100)
-2. **Thread Management** - Email conversation threading and metadata
-3. **AI Response Generation** - Automated email responses
-4. **Rate Limiting** - Per-account AI and API rate limits
-5. **Email Processing Pipeline** - End-to-end email handling
-6. **User/Organization Management** - Multi-tenant architecture
-7. Email Processing and Handling (Processing and Responding to Incoming Emails)
+### Environment Configuration
+- **Environment JSON Files**: `environments/{env}.json` for environment-specific settings
+- **Dynamic Loading**: Environment configurations loaded at runtime
+- **Centralized Variables**: All variables defined in `variables.tf`
 
-## GCP Target Architecture
+## Phase 1 Resources (Independent)
 
-### High-Level Architecture Diagram
+### Google Cloud APIs
 
+#### Resource: `google_project_service`
+**File**: `main-independent.tf` (Phase 1)
+**Purpose**: Enable required Google Cloud APIs for the project
+
+**Configuration**:
+```hcl
+resource "google_project_service" "required_apis" {
+  for_each = toset([
+    "firestore.googleapis.com",
+    "cloudfunctions.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "run.googleapis.com",
+    "storage.googleapis.com",
+    "pubsub.googleapis.com",
+    "identitytoolkit.googleapis.com",
+    "cloudkms.googleapis.com",
+    "monitoring.googleapis.com",
+    "logging.googleapis.com"
+  ])
+
+  project = local.env_config.project_id
+  service = each.value
+  disable_dependent_services = false
+  disable_on_destroy         = false
+}
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Frontend      │    │   Cloud Run     │    │   Cloud         │
-│   (Next.js)     │◄──►│   (API Layer)   │◄──►│   Functions     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │                       │
-                                ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Identity      │    │   Firestore     │    │   Cloud         │
-│   Platform      │    │   (Database)    │    │   Storage       │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │                       │
-                                ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Pub/Sub       │    │   Vertex AI     │    │   Cloud         │
-│   (Queuing)     │◄──►│   (AI/ML)       │◄──►│   KMS           │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+
+**Features**:
+- Enables all required APIs for the infrastructure
+- Prevents accidental API disabling
+- Ensures APIs are available for Phase 2 resources
+
+### Terraform Service Account
+
+#### Resource: `google_service_account` and `google_project_iam_member`
+**File**: `main-independent.tf` (Phase 1)
+**Purpose**: Service account for Terraform operations with appropriate permissions
+
+**Configuration**:
+```hcl
+resource "google_service_account" "terraform_sa" {
+  account_id   = "terraform-sa-${local.environment}"
+  display_name = "Terraform Service Account for ${local.environment}"
+  project      = local.env_config.project_id
+}
+
+resource "google_project_iam_member" "terraform_roles" {
+  for_each = toset([
+    "roles/firestore.admin",
+    "roles/cloudfunctions.developer",
+    "roles/storage.admin",
+    "roles/pubsub.admin",
+    "roles/iam.serviceAccountAdmin",
+    "roles/cloudkms.admin",
+    "roles/monitoring.admin",
+    "roles/logging.admin"
+  ])
+
+  project = local.env_config.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.terraform_sa.email}"
+}
 ```
 
-## Core Infrastructure Components
+**Features**:
+- Dedicated service account for Terraform operations
+- Principle of least privilege with specific roles
+- Environment-specific naming
 
-### 1. Compute Layer
+## Phase 2 Resources (Dependent)
 
-#### Cloud Run (Primary API Layer)
-- **Purpose**: Replace API Gateway + Lambda for HTTP endpoints
-- **Benefits**: 
-  - Better cold start performance than Lambda
-  - Native container support
-  - Automatic scaling
-  - Built-in load balancing
+### Firestore Database
 
-#### Cloud Functions (Event-Driven Processing)
-- **Purpose**: Handle Pub/Sub triggers and background processing
+#### Resource: `google_firestore_database`
+**File**: `main-dependent.tf` (Phase 2) via firestore module
+**Purpose**: NoSQL document database for application data storage
 
+**Configuration**:
+```hcl
+module "firestore" {
+  source = "./modules/firestore"
+  project_id    = local.env_config.project_id
+  environment   = local.environment
+  location_id   = local.env_config.region
+  database_name = "db-dev"
+}
+```
 
-### 2. Data Layer
-
-#### Firestore (Primary Database)
-- **Purpose**: Replace DynamoDB with better querying capabilities
-- **Collections**:
-  ```javascript
-  // Core LCP Collections
-  conversations: {
-    conversation_id: string,
-    account_id: string,
-    thread_id: string,
-    status: string, // 'active', 'completed', 'archived'
-    created_at: timestamp,
-    updated_at: timestamp,
-    ev_score: number, // 0-100
-    stage: string, // 'contacted', 'engaged', 'toured', 'offer', 'closed'
-    participants: string[],
-    message_count: number,
-    last_message_at: timestamp,
-    metadata: {
-      urgency: string,
-      category: string,
-      priority: number,
-      sentiment: string
-    }
+**Environment Configuration**:
+```json
+{
+  "firestore": {
+    "database_id": "dev-database",
+    "location_id": "us-central1",
+    "database_type": "FIRESTORE_NATIVE"
   }
+}
+```
 
-  messages: {
-    message_id: string,
-    conversation_id: string,
-    account_id: string,
-    sender_email: string,
-    recipient_email: string,
-    subject: string,
-    body: string,
-    timestamp: timestamp,
-    is_first_email: boolean,
-    status: string, // 'received', 'processed', 'responded', 'scheduled'
-    ai_response: string,
-    ev_score: number,
-    metadata: {
-      headers: object,
-      attachments: string[],
-      spam_score: number
-    }
-  }
+**Features**:
+- Document-based NoSQL database
+- Automatic scaling
+- Real-time updates
+- Offline support
+- Built-in security rules
 
-  users: {
-    user_id: string,
-    account_id: string,
-    email: string,
-    name: string,
-    role: string,
-    created_at: timestamp,
-    last_login: timestamp,
-    preferences: {
-      auto_response_enabled: boolean,
-      response_delay_hours: number,
-      max_response_length: number
-    }
-  }
+**Use Cases**:
+- User data storage
+- Application state management
+- Real-time collaboration
+- Mobile app backend
 
-  organizations: {
-    organization_id: string,
-    name: string,
-    domain: string,
-    created_at: timestamp,
-    status: string,
-    settings: {
-      email_domain_verification: boolean,
-      ai_response_enabled: boolean,
-      max_users: number,
-      storage_limit_gb: number
-    },
-    billing: {
-      plan: string,
-      next_billing_date: timestamp,
-      usage: {
-        emails_processed: number,
-        storage_used_gb: number
+### Cloud Storage
+
+#### Resource: `google_storage_bucket`
+**File**: `main-dependent.tf` (Phase 2)
+**Purpose**: Object storage for files, images, and static assets
+
+**Configuration**:
+```hcl
+module "cloud_storage" {
+  source = "./modules/cloud-storage"
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.cloud_storage.region
+  buckets     = local.env_config.cloud_storage.buckets
+}
+```
+
+**Environment Configuration**:
+```json
+{
+  "cloud_storage": {
+    "region": "us-central1",
+    "buckets": [
+      {
+        "name": "dev-storage-bucket",
+        "location": "us-central1",
+        "storage_class": "STANDARD"
       }
+    ]
+  }
+}
+```
+
+**Features**:
+- Object storage with global edge locations
+- Multiple storage classes
+- Lifecycle management
+- Access control
+- Versioning support
+
+**Use Cases**:
+- Static website hosting
+- File uploads and downloads
+- Backup storage
+- Media file storage
+
+### Pub/Sub Messaging
+
+#### Resource: `google_pubsub_topic` and `google_pubsub_subscription`
+**File**: `main-dependent.tf` (Phase 2)
+**Purpose**: Asynchronous messaging and event-driven architecture
+
+**Configuration**:
+```hcl
+module "pub_sub" {
+  source = "./modules/pub-sub"
+  project_id    = local.env_config.project_id
+  environment   = local.environment
+  region        = local.env_config.pub_sub.region
+  topics        = local.env_config.pub_sub.topics
+  subscriptions = local.env_config.pub_sub.subscriptions
+}
+```
+
+**Environment Configuration**:
+```json
+{
+  "pub_sub": {
+    "region": "us-central1",
+    "topics": [
+      {
+        "name": "dev-notifications",
+        "message_retention_duration": "604800s"
+      }
+    ],
+    "subscriptions": [
+      {
+        "name": "dev-notifications-sub",
+        "topic": "dev-notifications",
+        "ack_deadline_seconds": 20
+      }
+    ]
+  }
+}
+```
+
+**Features**:
+- Asynchronous messaging
+- Guaranteed delivery
+- Automatic scaling
+- Message ordering
+- Dead letter queues
+
+**Use Cases**:
+- Event-driven architecture
+- Microservices communication
+- Background job processing
+- Real-time notifications
+
+## Networking Resources
+
+### VPC Network
+
+#### Resource: `google_compute_network`
+**File**: `main-independent.tf` (Phase 1)
+**Purpose**: Virtual private cloud for network isolation
+
+**Configuration**:
+```hcl
+resource "google_compute_network" "vpc" {
+  name                    = "vpc-${local.environment}"
+  auto_create_subnetworks = false
+  routing_mode            = "REGIONAL"
+  project                 = local.env_config.project_id
+}
+```
+
+**Features**:
+- Network isolation
+- Custom routing
+- Subnet management
+- Firewall rules
+- Load balancing
+
+**Use Cases**:
+- Application network isolation
+- Multi-tier architecture
+- Security segmentation
+- Hybrid cloud connectivity
+
+### Subnet
+
+#### Resource: `google_compute_subnetwork`
+**File**: `main-independent.tf` (Phase 1)
+**Purpose**: IP address range within VPC
+
+**Configuration**:
+```hcl
+resource "google_compute_subnetwork" "subnet" {
+  name          = "subnet-${local.environment}"
+  ip_cidr_range = "10.0.1.0/24"
+  network       = google_compute_network.vpc.id
+  region        = local.env_config.region
+  project       = local.env_config.project_id
+}
+```
+
+**Features**:
+- IP address management
+- Regional deployment
+- Private Google access
+- Flow logs
+
+**Use Cases**:
+- Resource placement
+- Network segmentation
+- IP address planning
+- Regional deployments
+
+### Firewall Rules
+
+#### Resource: `google_compute_firewall`
+**File**: `main-independent.tf` (Phase 1)
+**Purpose**: Network security and access control
+
+**Web Access Rule**:
+```hcl
+resource "google_compute_firewall" "allow_web" {
+  name    = "allow-web-${local.environment}"
+  network = google_compute_network.vpc.name
+  project = local.env_config.project_id
+  
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "443"]
+  }
+  
+  source_ranges = local.environment == "prod" ? [] : ["0.0.0.0/0"]
+  target_tags   = ["web"]
+  description = "Allow HTTP/HTTPS traffic - restricted in production"
+}
+```
+
+**SSH Access Rule**:
+```hcl
+resource "google_compute_firewall" "allow_ssh" {
+  name    = "allow-ssh-${local.environment}"
+  network = google_compute_network.vpc.name
+  project = local.env_config.project_id
+  
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+  
+  source_ranges = local.environment == "prod" ? var.allowed_ssh_ips : ["0.0.0.0/0"]
+  target_tags   = ["ssh"]
+  description = "Allow SSH access - restricted to specific IPs in production"
+}
+```
+
+**Features**:
+- Port-based filtering
+- Source IP restrictions
+- Target tag filtering
+- Environment-specific rules
+- Security logging
+
+**Use Cases**:
+- Application security
+- Administrative access
+- Network segmentation
+- Compliance requirements
+
+## Module-Based Resources (Phase 2)
+
+### Cloud Functions
+
+#### Module: `cloud-functions`
+**File**: `main-dependent.tf` (Phase 2)
+**Purpose**: Serverless function execution
+
+**Configuration**:
+```hcl
+module "cloud_functions" {
+  source = "./modules/cloud-functions"
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.cloud_functions.region
+  functions   = local.env_config.cloud_functions.functions
+}
+```
+
+**Environment Configuration**:
+```json
+{
+  "cloud_functions": {
+    "region": "us-central1",
+    "functions": [
+      {
+        "name": "dev-api-handler",
+        "runtime": "nodejs18",
+        "entry_point": "handler",
+        "source_dir": "functions/api-handler",
+        "trigger_http": true
+      }
+    ]
+  }
+}
+```
+
+**Features**:
+- Serverless execution
+- Automatic scaling
+- Multiple runtimes
+- HTTP triggers
+- Event-driven
+
+**Use Cases**:
+- API endpoints
+- Data processing
+- Event handlers
+- Microservices
+
+### API Gateway
+
+#### Module: `api-gateway`
+**File**: `main-dependent.tf` (Phase 2)
+**Purpose**: HTTP API management and routing
+
+**Configuration**:
+```hcl
+module "api_gateway" {
+  source = "./modules/api-gateway"
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.api_gateway.region
+  api_config  = local.env_config.api_gateway.api_config
+}
+```
+
+**Environment Configuration**:
+```json
+{
+  "api_gateway": {
+    "region": "us-central1",
+    "api_config": {
+      "api_id": "dev-api",
+      "display_name": "Development API",
+      "openapi_doc": "api-spec.yaml"
     }
   }
+}
+```
 
-  rate_limits: {
-    account_id: string,
-    request_count: number,
-    window_start: timestamp,
-    window_end: timestamp,
-    last_request: timestamp,
-    limit: number,
-    reset_time: timestamp,
-    blocked_until: timestamp,
-    metadata: {
-      function_calls: object,
-      service_calls: object
+**Features**:
+- HTTP API management
+- OpenAPI specification
+- Authentication
+- Rate limiting
+- Monitoring
+
+**Use Cases**:
+- REST API hosting
+- API versioning
+- Client SDK generation
+- API documentation
+
+### Identity Platform
+
+#### Module: `identity-platform`
+**File**: `main-dependent.tf` (Phase 2)
+**Purpose**: User authentication and authorization
+
+**Configuration**:
+```hcl
+module "identity_platform" {
+  source = "./modules/identity-platform"
+  project_id               = local.env_config.project_id
+  environment              = local.environment
+  region                   = local.env_config.identity_platform.region
+  identity_platform_config = local.env_config.identity_platform.identity_platform_config
+}
+```
+
+**Environment Configuration**:
+```json
+{
+  "identity_platform": {
+    "region": "us-central1",
+    "identity_platform_config": {
+      "display_name": "Development Identity Platform",
+      "enabled_sign_in_methods": ["EMAIL_PASSWORD", "GOOGLE"]
     }
   }
+}
+```
 
-  ev_data: {
-    conversation_id: string,
-    ev_score: number,
-    calculation_date: timestamp,
-    factors: {
-      urgency: number,
-      priority: number,
-      sentiment: number,
-      response_time: number
-    },
-    algorithm_version: string,
-    confidence_score: number,
-    recommendations: string[]
+**Features**:
+- Multi-provider authentication
+- User management
+- Social login
+- Custom claims
+- Security policies
+
+**Use Cases**:
+- User authentication
+- Single sign-on
+- Social login integration
+- User profile management
+
+### Cloud KMS
+
+#### Module: `cloud-kms`
+**File**: `main-dependent.tf` (Phase 2)
+**Purpose**: Encryption key management
+
+**Configuration**:
+```hcl
+module "cloud_kms" {
+  source = "./modules/cloud-kms"
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.cloud_kms.region
+  keyrings    = local.env_config.cloud_kms.keyrings
+}
+```
+
+**Environment Configuration**:
+```json
+{
+  "cloud_kms": {
+    "region": "us-central1",
+    "keyrings": [
+      {
+        "name": "dev-encryption-keys",
+        "location": "us-central1"
+      }
+    ]
   }
+}
+```
 
-  llm_data: {
-    conversation_id: string,
-    model_used: string,
-    prompt_tokens: number,
-    response_tokens: number,
-    total_tokens: number,
-    response_time_ms: number,
-    quality_score: number,
-    generated_at: timestamp,
-    prompt: string,
-    response: string,
-    metadata: {
-      temperature: number,
-      top_p: number,
-      max_tokens: number,
-      cost_usd: number
+**Features**:
+- Encryption key management
+- Hardware security modules
+- Key rotation
+- Audit logging
+- Compliance support
+
+**Use Cases**:
+- Data encryption
+- Secret management
+- Compliance requirements
+- Secure key storage
+
+### Monitoring
+
+#### Module: `monitoring`
+**File**: `main-dependent.tf` (Phase 2)
+**Purpose**: Infrastructure monitoring and alerting
+
+**Configuration**:
+```hcl
+module "monitoring" {
+  source = "./modules/monitoring"
+  project_id        = local.env_config.project_id
+  environment       = local.environment
+  region            = local.env_config.monitoring.region
+  monitoring_config = local.env_config.monitoring.monitoring_config
+}
+```
+
+**Environment Configuration**:
+```json
+{
+  "monitoring": {
+    "region": "us-central1",
+    "monitoring_config": {
+      "uptime_checks": [
+        {
+          "name": "dev-api-uptime",
+          "uri": "https://api.dev.example.com/health"
+        }
+      ],
+      "alert_policies": [
+        {
+          "name": "dev-error-alerts",
+          "condition": "error_rate > 0.05"
+        }
+      ]
     }
   }
-  ```
-
-#### Cloud Storage (File Storage)
-- **Purpose**: Replace S3 for file storage
-- **Buckets**:
-  - `lcp-email-attachments-{env}` - Email attachments and content
-  - `lcp-templates-{env}` - Email templates and signatures
-  - `lcp-analytics-{env}` - Analytics data and reports
-  - `lcp-backups-{env}` - System backups
-
-### 3. Messaging Layer
-
-#### Pub/Sub (Message Queuing)
-- **Purpose**: Replace SQS/SNS for event-driven processing
-- **Topics**:
-  - `email-received` - New email notifications
-  - `email-processed` - Email processing completion
-  - `ev-calculation` - EV scoring requests
-  - `ai-response` - AI response generation
-  - `rate-limit-check` - Rate limiting requests
-
-#### Subscriptions:
-  - `email-processor-sub` - Processes new emails
-  - `ev-scorer-sub` - Calculates engagement values
-  - `ai-response-sub` - Generates AI responses
-  - `rate-limiter-sub` - Handles rate limiting
-
-### 4. AI/ML Layer
-
-#### Vertex AI (AI/ML Platform)
-- **Purpose**: Replace Together AI with native GCP AI services
-- **Services**:
-  - **Vertex AI Model Garden** - Access to 12+ LLM models
-  - **Custom Models** - Fine-tuned models for LCP
-  - **Batch Prediction** - Batch EV scoring
-  - **Online Prediction** - Real-time AI responses
-  - **Model Monitoring** - AI model performance tracking
-
-#### AI Models for LCP:
-```javascript
-// EV Scoring Models (12 LLMs)
-const evScoringModels = [
-  'gemini-1.5-pro',
-  'gemini-1.5-flash',
-  'claude-3-sonnet',
-  'claude-3-haiku',
-  'llama-3-70b',
-  'llama-3-8b',
-  'mistral-7b',
-  'mixtral-8x7b',
-  'codellama-34b',
-  'phi-3-mini',
-  'qwen-72b',
-  'yi-34b'
-];
-
-// Response Generation Models
-const responseModels = {
-  primary: 'gemini-1.5-pro',
-  fast: 'gemini-1.5-flash',
-  creative: 'claude-3-sonnet',
-  efficient: 'llama-3-8b'
-};
+}
 ```
 
-### 5. Security Layer
+**Features**:
+- Uptime monitoring
+- Performance metrics
+- Alert policies
+- Log analysis
+- Dashboard creation
 
-#### Identity Platform (Authentication)
-- **Purpose**: Replace Cognito with native GCP authentication
-- **Features**:
-  - Multi-provider authentication (Google, Email/Password)
-  - Multi-factor authentication
-  - Session management
-  - Role-based access control
+**Use Cases**:
+- Service monitoring
+- Performance tracking
+- Incident response
+- Capacity planning
 
-#### Cloud KMS (Encryption)
-- **Purpose**: Centralized key management
-- **Keys**:
-  - `lcp-data-encryption` - Database encryption
-  - `lcp-api-keys` - API key management
-  - `lcp-email-signing` - Email signing keys
+## Stack Helper Files
 
-#### Secret Manager
-- **Purpose**: Secure credential storage
-- **Secrets**:
-  - API keys for external services
-  - Database connection strings
-  - AI model access tokens
-  - Email service credentials
+### Variables (`stack/variables.tf`)
+**Purpose**: Centralized variable definitions with validation
 
-### 6. Monitoring & Observability
+**Key Variables**:
+- `environment`: Target environment (dev, staging, prod)
+- `project_id`: Google Cloud Project ID
+- `region`: Google Cloud region
+- `allowed_ssh_ips`: SSH access control
+- `allowed_web_ips`: Web access control
+- `subnet_config`: Subnet configuration
 
-#### Cloud Monitoring
-- **Custom Metrics**:
-  - EV scoring accuracy
-  - Response generation latency
-  - Email processing throughput
-  - User engagement rates
-  - Conversion funnel metrics
+### Outputs (`stack/outputs.tf`)
+**Purpose**: Resource information and status outputs
 
-#### Cloud Logging
-- **Structured Logging**:
-  - Request/response logs
-  - AI model interactions
-  - Error tracking
-  - Performance metrics
+**Key Outputs**:
+- Firestore database information
+- VPC and subnet details
+- Module outputs
+- Connection information
+- Status indicators
 
-#### Error Reporting
-- **Real-time Error Tracking**:
-  - Application errors
-  - AI model failures
-  - Infrastructure issues
+### Providers (`stack/providers.tf`)
+**Purpose**: Google Cloud provider configurations
 
-## LCP-Specific Infrastructure
+**Providers**:
+- Google provider for standard resources
+- Google-beta provider for beta features
+- Archive provider for function deployments
 
-### 1. EV Scoring System
+### Versions (`stack/versions.tf`)
+**Purpose**: Version constraints for Terraform and providers
 
-#### Architecture:
-```javascript
-// EV Scoring Pipeline
-const evScoringPipeline = {
-  input: 'email_message',
-  processing: [
-    'text_preprocessing',
-    'multi_model_scoring', // 12 LLMs
-    'score_aggregation',
-    'confidence_calculation',
-    'stage_assignment'
-  ],
-  output: {
-    ev_score: number, // 0-100
-    confidence: number,
-    stage: string,
-    factors: object,
-    recommendations: string[]
-  }
-};
-```
+**Constraints**:
+- Terraform version requirements
+- Provider version constraints
+- Compatibility specifications
 
-#### Cloud Functions:
-- `ev-scorer` - Main EV scoring function
-- `ev-aggregator` - Aggregates scores from multiple models
-- `ev-validator` - Validates scoring results
+### Backend (`stack/backend.tf`)
+**Purpose**: Remote state storage configuration
 
-### 2. Thread Management System
+**Configuration**:
+- GCS backend for state storage
+- Environment-specific buckets
+- State locking and encryption
 
-#### Architecture:
-```javascript
-// Thread Management
-const threadManagement = {
-  creation: 'new_email_received',
-  processing: [
-    'conversation_linking',
-    'participant_identification',
-    'metadata_extraction',
-    'stage_tracking',
-    'ai_suggestion_generation'
-  ],
-  actions: [
-    'send_response',
-    'schedule_followup',
-    'flag_for_review',
-    'advance_stage'
-  ]
-};
-```
+## Environment-Specific Configurations
 
-### 3. AI Response Generation
+### Development Environment
+- **Project**: `terraform-anay-dev`
+- **Region**: `us-central1`
+- **Features**: Basic monitoring, open access
+- **Resources**: Minimal for cost efficiency
 
-#### Architecture:
-```javascript
-// AI Response Pipeline
-const aiResponsePipeline = {
-  input: 'conversation_context',
-  processing: [
-    'context_analysis',
-    'intent_detection',
-    'response_generation',
-    'quality_scoring',
-    'safety_check'
-  ],
-  output: {
-    response: string,
-    confidence: number,
-    suggested_actions: string[],
-    next_steps: string[]
-  }
-};
-```
+### Staging Environment
+- **Project**: `terraform-anay-staging`
+- **Region**: `us-central1`
+- **Features**: Production-like configuration
+- **Resources**: Full feature set for testing
 
-## Performance Optimizations
+### Production Environment
+- **Project**: `terraform-anay-prod`
+- **Region**: `us-central1`
+- **Features**: Full monitoring, restricted access
+- **Resources**: High availability, security focus
 
-### 1. Caching Strategy
-- **Cloud CDN** - Static content delivery
-- **Memorystore (Redis)** - Session and data caching
-- **Cloud Storage** - CDN for file delivery
+## Resource Dependencies
 
-### 2. Database Optimization
-- **Firestore Indexes** - Optimized queries
-- **Batch Operations** - Efficient data operations
-- **Connection Pooling** - Optimized connections
+### Phase 1 Dependencies
+- **Firestore Database**: No dependencies
+- **Cloud Storage**: No dependencies
+- **Pub/Sub**: No dependencies
+- **VPC**: No dependencies
+- **Subnet**: Depends on VPC
+- **Firewall**: Depends on VPC
 
-### 3. AI Model Optimization
-- **Model Caching** - Cache frequently used models
-- **Batch Processing** - Process multiple requests together
-- **Model Selection** - Choose optimal model per use case
+### Phase 2 Dependencies
+- **Cloud Functions**: Depends on VPC and Pub/Sub
+- **API Gateway**: Depends on Cloud Functions
+- **Identity Platform**: No dependencies
+- **Cloud KMS**: No dependencies
+- **Monitoring**: Depends on all other resources
+- **Firestore Indexes**: Depends on Firestore Database
 
-## Security Enhancements
+## Security Considerations
 
-### 1. Data Protection
-- **Encryption at Rest** - All data encrypted
-- **Encryption in Transit** - TLS 1.3 for all communications
-- **Data Classification** - Sensitive data identification
-- **Access Controls** - Principle of least privilege
+### Network Security
+- VPC isolation for all resources
+- Environment-specific firewall rules
+- Restricted access in production
+- Private Google access enabled
 
-### 2. API Security
-- **API Keys** - Secure API access
-- **Rate Limiting** - Prevent abuse
-- **Input Validation** - Sanitize all inputs
-- **CORS Configuration** - Secure cross-origin requests
+### Data Security
+- Encryption at rest for all storage
+- Encryption in transit for all communications
+- KMS key management for sensitive data
+- Audit logging for all operations
 
-### 3. Compliance
-- **GDPR Compliance** - Data protection regulations
-- **SOC 2 Type II** - Security controls
-- **ISO 27001** - Information security
-- **Regular Audits** - Security assessments
-
-## Scalability Features
-
-### 1. Auto-scaling
-- **Cloud Run** - Automatic scaling based on demand
-- **Cloud Functions** - Event-driven scaling
-- **Firestore** - Automatic scaling for database
-
-### 2. Load Balancing
-- **Cloud Load Balancer** - Global load balancing
-- **Health Checks** - Automatic failover
-- **Traffic Management** - Intelligent routing
-
-### 3. Multi-region Deployment
-- **Global Distribution** - Deploy across regions
-- **Data Replication** - Cross-region data backup
-- **Disaster Recovery** - Business continuity
+### Access Control
+- IAM roles with least privilege
+- Service account management
+- Environment-specific permissions
+- Regular access reviews
 
 ## Cost Optimization
 
-### 1. Resource Optimization
-- **Right-sizing** - Optimize resource allocation
-- **Scheduling** - Scale down during off-peak hours
-- **Reserved Instances** - Commit to usage for discounts
+### Development Environment
+- Minimal resource allocation
+- Auto-scaling disabled
+- Basic monitoring only
+- Cost alerts enabled
 
-### 2. AI Cost Management
-- **Model Selection** - Choose cost-effective models
-- **Batch Processing** - Reduce API calls
-- **Caching** - Cache expensive operations
+### Staging Environment
+- Production-like configuration
+- Full monitoring enabled
+- Performance testing resources
+- Cost optimization testing
 
-### 3. Storage Optimization
-- **Lifecycle Policies** - Automatic data archival
-- **Compression** - Reduce storage costs
-- **Tiered Storage** - Use appropriate storage classes
+### Production Environment
+- Optimized resource allocation
+- Auto-scaling enabled
+- Full monitoring and alerting
+- Cost monitoring and optimization
 
-## Migration Strategy
+## Monitoring and Observability
 
-### Phase 1: Foundation (Weeks 1-4)
-1. Set up GCP project and billing
-2. Deploy core infrastructure (VPC, IAM, KMS)
-3. Set up monitoring and logging
-4. Create development environment
+### Infrastructure Monitoring
+- Resource utilization tracking
+- Performance metrics collection
+- Error rate monitoring
+- Cost tracking and alerts
 
-### Phase 2: Data Migration (Weeks 5-8)
-1. Set up Firestore and create collections
-2. Migrate data from DynamoDB to Firestore
-3. Set up data validation and testing
-4. Create backup and recovery procedures
+### Application Monitoring
+- API endpoint monitoring
+- Function execution tracking
+- Database performance monitoring
+- User experience metrics
 
-### Phase 3: API Migration (Weeks 9-12)
-1. Deploy Cloud Run services
-2. Migrate Lambda functions to Cloud Functions
-3. Set up API Gateway and routing
-4. Implement authentication with Identity Platform
-
-### Phase 4: AI/ML Migration (Weeks 13-16)
-1. Set up Vertex AI environment
-2. Migrate AI models and pipelines
-3. Implement EV scoring system
-4. Set up AI response generation
-
-### Phase 5: Testing & Optimization (Weeks 17-20)
-1. Comprehensive testing
-2. Performance optimization
-3. Security hardening
-4. Documentation and training
-
-### Phase 6: Production Deployment (Weeks 21-24)
-1. Production environment setup
-2. Gradual traffic migration
-3. Monitoring and alerting
-4. Go-live and support
-
-## Risk Mitigation
-
-### 1. Data Loss Prevention
-- **Backup Strategy** - Multiple backup locations
-- **Data Validation** - Verify data integrity
-- **Rollback Plan** - Quick recovery procedures
-
-### 2. Performance Risks
-- **Load Testing** - Validate performance under load
-- **Monitoring** - Real-time performance tracking
-- **Optimization** - Continuous performance improvement
-
-### 3. Security Risks
-- **Security Testing** - Regular security assessments
-- **Access Reviews** - Periodic access audits
-- **Incident Response** - Security incident procedures
-
-## Success Metrics
-
-### 1. Performance Metrics
-- **Response Time** - < 200ms for API calls
-- **Throughput** - 1000+ requests/second
-- **Availability** - 99.9% uptime
-- **Latency** - < 50ms for AI responses
-
-### 2. Business Metrics
-- **EV Scoring Accuracy** - > 90% accuracy
-- **Response Quality** - > 85% user satisfaction
-- **Conversion Rate** - Improved lead conversion
-- **Cost Efficiency** - 30% cost reduction
-
-### 3. Technical Metrics
-- **Error Rate** - < 0.1% error rate
-- **Security Incidents** - Zero security breaches
-- **Compliance** - 100% compliance score
-- **Documentation** - Complete technical documentation
+### Security Monitoring
+- Access pattern analysis
+- Security event logging
+- Compliance reporting
+- Threat detection
 
 ## Conclusion
 
-This GCP backend infrastructure plan provides a modern, scalable, and secure foundation for the ACS Lead Conversion Pipeline. The architecture leverages GCP's native services to create a more efficient and robust system compared to the current AWS implementation.
+This backend infrastructure provides a comprehensive, scalable, and secure foundation for modern cloud applications. The 2-step deployment approach ensures reliable resource creation while the centralized helper files maintain consistency across environments.
 
-Key improvements include:
-- **Better Performance** - Cloud Run provides faster cold starts than Lambda
-- **Enhanced Security** - Native GCP security services
-- **Improved Scalability** - Automatic scaling and global distribution
-- **Cost Optimization** - More efficient resource utilization
-- **Better AI Integration** - Native Vertex AI platform
-- **Enhanced Monitoring** - Comprehensive observability
-
-The phased migration approach ensures minimal disruption while providing a clear path to a more advanced and efficient LCP system.
+Key benefits:
+1. **Reliable deployments** through phased approach
+2. **Environment isolation** with separate configurations
+3. **Security by design** with comprehensive controls
+4. **Scalability** through modular architecture
+5. **Maintainability** through centralized management
 

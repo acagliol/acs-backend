@@ -1,0 +1,53 @@
+{
+  "environment": "prod",
+  "project_id": "acs-prod-464702",
+  "project_name": "acs-prod",
+  "region": "us-central1",
+  "zone": "us-central1-c",
+  "bucket_name": "tf-state-prod-2",
+  "subnet_cidr": "10.0.3.0/24",
+  "machine_type": "e2-standard-2",
+  "disk_size": 100,
+  
+  "firestore": {
+    "database_id": "db-prod",
+    "location_id": "us-central1",
+    "database_type": "FIRESTORE_NATIVE"
+  },
+  
+  "cloud_functions": {
+    "region": "us-central1",
+    "functions": {}
+  },
+  
+  "api_gateway": {
+    "region": "us-central1",
+    "api_config": {}
+  },
+  
+  "cloud_storage": {
+    "region": "us-central1",
+    "buckets": {}
+  },
+  
+  "pub_sub": {
+    "region": "us-central1",
+    "topics": {},
+    "subscriptions": {}
+  },
+  
+  "identity_platform": {
+    "region": "us-central1",
+    "identity_platform_config": {}
+  },
+  
+  "cloud_kms": {
+    "region": "us-central1",
+    "keyrings": {}
+  },
+  
+  "monitoring": {
+    "region": "us-central1",
+    "monitoring_config": {}
+  }
+} 

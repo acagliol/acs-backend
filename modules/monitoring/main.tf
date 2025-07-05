@@ -10,36 +10,41 @@ terraform {
   }
 }
 
-# Variables
+# =============================================================================
+# VARIABLE DECLARATIONS
+# =============================================================================
+# These variables are defined centrally in the root variables.tf file
+# and are referenced here for module use.
+
 variable "project_id" {
-  description = "The GCP project ID"
+  description = "The GCP project ID (defined centrally in variables.tf)"
   type        = string
 }
 
 variable "environment" {
-  description = "Environment name (dev, staging, prod)"
+  description = "Environment name (dev, staging, prod) (defined centrally in variables.tf)"
   type        = string
 }
 
 variable "region" {
-  description = "The region to deploy monitoring resources"
+  description = "The region to deploy monitoring (defined centrally in variables.tf)"
   type        = string
   default     = "us-central1"
 }
 
 variable "monitoring_config" {
-  description = "Monitoring configuration"
+  description = "Monitoring and logging configuration (defined centrally in variables.tf)"
   type        = map(any)
   default     = {}
 }
 
 # Outputs
 output "log_sinks" {
-  description = "Created log sinks"
-  value       = {}
+  description = "Names of the created log sinks"
+  value       = []
 }
 
 output "uptime_checks" {
-  description = "Created uptime checks"
-  value       = {}
+  description = "Names of the created uptime checks"
+  value       = []
 } 

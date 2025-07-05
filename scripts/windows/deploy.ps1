@@ -1,5 +1,22 @@
-# Terraform Deployment Script (PowerShell)
-# Usage: .\scripts\windows\deploy.ps1 [dev|staging|prod] [--force] [--dry-run]
+# Terraform Deployment Script (PowerShell) - Phase-Based Deployment
+# Usage: .\scripts\windows\deploy.ps1 [dev|staging|prod] [--force] [--dry-run] [--phase1] [--phase2]
+# 
+# Phase 1: Independent resources (main-independent.tf only)
+#   - Creates temporary workspace with only main-independent.tf
+#   - Deploys all resources defined in main-independent.tf
+#   - Includes Firestore database and other independent resources
+# 
+# Phase 2: Dependent resources (main-dependent.tf only)
+#   - Creates temporary workspace with only main-dependent.tf
+#   - Deploys all resources defined in main-dependent.tf
+#   - Includes all modules and dependent infrastructure resources
+# 
+# Examples:
+#   .\scripts\windows\deploy.ps1 dev                    # Deploy both phases to dev
+#   .\scripts\windows\deploy.ps1 dev -Phase1            # Deploy only Phase 1 (independent resources) to dev
+#   .\scripts\windows\deploy.ps1 dev -Phase2            # Deploy only Phase 2 (dependent resources) to dev
+#   .\scripts\windows\deploy.ps1 dev -DryRun            # Dry run both phases
+#   .\scripts\windows\deploy.ps1 dev -Phase1 -DryRun    # Dry run only Phase 1
 
 param(
     [Parameter(Mandatory=$true)]
@@ -8,14 +25,13 @@ param(
     
     [switch]$Force,
     [switch]$DryRun,
-    [switch]$Help
+    [switch]$Phase1,
+    [switch]$Phase2
 )
 
 # Script configuration
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $ScriptDir)
-$ConfigFile = Join-Path $ProjectRoot "config\environments.json"
-$Environments = @("dev", "staging", "prod")
 
 # Function to print colored output
 function Write-Status {
@@ -38,66 +54,88 @@ function Write-Error {
     Write-Host "[ERROR] $Message" -ForegroundColor Red
 }
 
-# Function to show usage
-function Show-Usage {
-    Write-Host @"
-Usage: $($MyInvocation.MyCommand.Name) [ENVIRONMENT] [OPTIONS]
-
-ENVIRONMENTS:
-    dev       - Deploy to development environment
-    staging   - Deploy to staging environment
-    prod      - Deploy to production environment (requires approval)
-
-OPTIONS:
-    -Force     - Skip confirmation prompts
-    -DryRun    - Show what would be deployed without making changes
-    -Help      - Show this help message
-
-EXAMPLES:
-    $($MyInvocation.MyCommand.Name) dev                    # Deploy to dev environment
-    $($MyInvocation.MyCommand.Name) staging -DryRun        # Show staging deployment plan
-    $($MyInvocation.MyCommand.Name) prod -Force            # Deploy to prod (skips confirmation)
-
-"@
+# Function to show a simple spinner while a job runs
+function Show-Spinner {
+    param(
+        [scriptblock]$Job,
+        [string]$Message
+    )
+    $spinner = @('|', '/', '-', '\\')
+    $i = 0
+    
+    # Execute the job directly instead of using Start-Job for better compatibility
+    $output = & $Job
+    $exitCode = $LASTEXITCODE
+    
+    # Show completion message
+    Write-Host "`r$Message ...done.   "
+    
+    return $output
 }
 
-# Function to check dependencies
-function Test-Dependencies {
-    $missingDeps = @()
+# Function to run terraform command with progress
+function Invoke-TerraformWithProgress {
+    param(
+        [string]$Command,
+        [string]$Arguments,
+        [string]$Activity,
+        [string]$SuccessMessage,
+        [string]$ErrorMessage
+    )
     
-    if (-not (Get-Command terraform -ErrorAction SilentlyContinue)) {
-        $missingDeps += "terraform"
-    }
+    Write-Status "$Activity..."
     
-    if (-not (Get-Command gcloud -ErrorAction SilentlyContinue)) {
-        $missingDeps += "gcloud"
-    }
+    # Capture output and errors
+    $output = & terraform $Command $Arguments.Split(' ') 2>&1
+    $exitCode = $LASTEXITCODE
     
-    if ($missingDeps.Count -gt 0) {
-        Write-Error "Missing required dependencies: $($missingDeps -join ', ')"
-        Write-Error "Please install the missing tools and try again."
-        exit 1
+    if ($exitCode -eq 0) {
+        Write-Success $SuccessMessage
+        return $true
+    } else {
+        Write-Error $ErrorMessage
+        Write-Error "Command output: $output"
+        return $false
     }
 }
 
-# Function to check if environment is enabled
-function Test-EnvironmentEnabled {
+# Function to run terraform apply with spinner
+function Invoke-TerraformApply {
+    param(
+        [string]$planFile,
+        [string]$phase
+    )
+    Write-Status "Applying $phase changes..."
+    $applyJob = {
+        terraform apply -auto-approve "$planFile" -no-color 2>&1
+    }
+    $applyOutput = Show-Spinner -Job $applyJob -Message "Running terraform apply"
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "$phase deployment completed successfully!"
+        return $true
+    } else {
+        Write-Error "$phase deployment failed!"
+        Write-Error "Apply output: $applyOutput"
+        return $false
+    }
+}
+
+# Function to load environment configuration
+function Get-EnvironmentConfig {
     param([string]$env)
     
-    if ($env -eq "prod") {
-        Write-Warning "Production environment deployment - extra care required"
-        Write-Warning "Ensure you have proper approvals before proceeding"
+    $envConfigFile = Join-Path $ProjectRoot "environments\$env.json"
+    
+    if (-not (Test-Path $envConfigFile)) {
+        Write-Error "Environment configuration file not found: $envConfigFile"
+        exit 1
     }
     
-    # Validate that the environment exists in the config
     try {
-        $envConfig = Get-EnvironmentConfig $env
-        if (-not $envConfig) {
-            Write-Error "Environment '$env' not found in configuration"
-            exit 1
-        }
+        $config = Get-Content $envConfigFile | ConvertFrom-Json
+        return $config
     } catch {
-        Write-Error "Failed to validate environment '$env': $($_.Exception.Message)"
+        Write-Error "Failed to load environment configuration file: $($_.Exception.Message)"
         exit 1
     }
 }
@@ -110,8 +148,13 @@ function Invoke-PreflightChecks {
     $preflightScript = Join-Path $ScriptDir "preflight.ps1"
     if (Test-Path $preflightScript) {
         & $preflightScript $env
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Preflight checks failed"
+            exit 1
+        }
     } else {
-        Write-Warning "Preflight script not found, skipping checks"
+        Write-Error "Preflight script not found"
+        exit 1
     }
 }
 
@@ -128,38 +171,15 @@ function Backup-State {
     }
 }
 
-# Function to load environment configuration
-function Get-EnvironmentConfig {
-    param([string]$env)
-    
-    if (-not (Test-Path $ConfigFile)) {
-        Write-Error "Configuration file not found: $ConfigFile"
-        exit 1
-    }
-    
-    try {
-        $config = Get-Content $ConfigFile | ConvertFrom-Json
-        if ($config.environments.$env) {
-            return $config.environments.$env
-        } else {
-            Write-Error "Environment '$env' not found in configuration file"
-            exit 1
-        }
-    } catch {
-        Write-Error "Failed to load configuration file: $($_.Exception.Message)"
-        exit 1
-    }
-}
-
-# Function to deploy to environment
-function Deploy-Environment {
+# Function to deploy Phase 1 (independent resources)
+function Deploy-Phase1 {
     param(
         [string]$env,
-        [bool]$force,
-        [bool]$dryRun
+        $force,
+        $dryRun
     )
     
-    Write-Status "Deploying to $env environment..."
+    Write-Status "Deploying Phase 1: Independent resources..."
     
     # Change to project root
     Push-Location $ProjectRoot
@@ -169,112 +189,350 @@ function Deploy-Environment {
         $envConfig = Get-EnvironmentConfig $env
         $bucketName = $envConfig.bucket_name
         
-        # Initialize Terraform with backend configuration
-        if (-not (Test-Path ".terraform")) {
-            Write-Status "Initializing Terraform..."
-            $backendConfig = @(
-                "-backend-config=bucket=$bucketName",
-                "-backend-config=prefix=terraform/state"
-            )
-            terraform init @backendConfig
+        # Create temporary directory for Phase 1 deployment
+        $phase1Dir = Join-Path $ProjectRoot "temp-phase1"
+        if (Test-Path $phase1Dir) {
+            Remove-Item $phase1Dir -Recurse -Force
         }
+        New-Item -ItemType Directory -Path $phase1Dir | Out-Null
         
-        # Validate Terraform configuration
-        Write-Status "Validating Terraform configuration..."
-        if (-not (terraform validate)) {
-            Write-Error "Terraform validation failed"
-            exit 1
-        }
+        Write-Status "Creating Phase 1 workspace with independent resources only..."
         
-        # Format Terraform code
-        Write-Status "Formatting Terraform code..."
-        terraform fmt -recursive
+        # Copy only Phase 1 files to temporary directory
+        Copy-Item "main-independent.tf" $phase1Dir
+        Copy-Item "variables.tf" $phase1Dir
+        Copy-Item "providers.tf" $phase1Dir
+        Copy-Item "versions.tf" $phase1Dir
+        Copy-Item "backend.tf" $phase1Dir
+        Copy-Item "environments" $phase1Dir -Recurse
+        Copy-Item "modules" $phase1Dir -Recurse
         
-        # Show plan
-        Write-Status "Generating deployment plan..."
-        terraform plan -var="environment=$env" -out=tfplan
+        # Change to Phase 1 directory
+        Push-Location $phase1Dir
         
-        if ($dryRun) {
-            Write-Success "Dry run completed. Review the plan above."
-            Write-Status "To apply changes, run: python scripts/run deploy $env"
-            return
-        }
-        
-        # Confirm deployment (unless -Force is used)
-        if (-not $force) {
-            Write-Host ""
-            Write-Warning "You are about to deploy to the $env environment."
-            Write-Warning "This will modify infrastructure resources."
-            
-            if ($env -eq "prod") {
-                Write-Warning "⚠️  PRODUCTION DEPLOYMENT - This affects live systems!"
-                Write-Host ""
-                $confirmation = Read-Host "Type 'PRODUCTION' to confirm"
-                if ($confirmation -ne "PRODUCTION") {
-                    Write-Error "Production deployment cancelled"
-                    exit 1
-                }
-            } else {
-                $confirmation = Read-Host "Do you want to continue? (y/N)"
-                if ($confirmation -notmatch "^[Yy]$") {
-                    Write-Error "Deployment cancelled"
+        try {
+            # Check if terraform init is needed
+            if (-not (Test-Path ".terraform")) {
+                Write-Status "Initializing Terraform for Phase 1..."
+                $initResult = & terraform init -backend-config="bucket=$bucketName" -backend-config="prefix=terraform/state" 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Error "Terraform init failed: $initResult"
                     exit 1
                 }
             }
-        }
-        
-        # Apply changes
-        Write-Status "Applying Terraform changes..."
-        if (terraform apply tfplan) {
-            Write-Success "Deployment to $env completed successfully!"
             
-            # Show outputs
-            Write-Status "Deployment outputs:"
-            terraform output
-        } else {
-            Write-Error "Deployment to $env failed!"
-            Write-Status "Check the error messages above and fix any issues."
-            Write-Status "You can run 'python scripts/run rollback $env' if needed."
-            exit 1
+            # Validate Terraform configuration
+            if (-not (Invoke-TerraformWithProgress -Command "validate" -Arguments "" -Activity "Validating Terraform Configuration" -SuccessMessage "Terraform configuration is valid" -ErrorMessage "Terraform validation failed")) {
+                exit 1
+            }
+            
+            # Format Terraform code
+            Write-Status "Formatting Terraform code..."
+            terraform fmt -recursive | Out-Null
+            
+            # Generate plan for Phase 1 - Only resources from main-independent.tf
+            Write-Status "Generating Phase 1 plan (independent resources only)..."
+            
+            # Run terraform plan for Phase 1 (only main-independent.tf resources)
+            Write-Host "`n[INFO] Running: terraform plan -var=`"environment=$env`" -out=`"tfplan-phase1`"`n" -ForegroundColor Cyan
+            Write-Host "Current directory: $(Get-Location)" -ForegroundColor Yellow
+            Write-Host "Files in Phase 1 directory: $(Get-ChildItem -Name)" -ForegroundColor Yellow
+            
+            # Force output to display by explicitly calling terraform and flushing output
+            $planResult = & terraform plan -var="environment=$env" -out="tfplan-phase1" -detailed-exitcode 2>&1
+            $planExitCode = $LASTEXITCODE
+            
+            # Display the plan output with proper formatting
+            $planResult -split "`n" | ForEach-Object { Write-Host $_ }
+            
+            # With -detailed-exitcode, terraform plan returns:
+            # 0 = no changes, 1 = errors, 2 = changes to apply
+            if ($planExitCode -eq 0 -or $planExitCode -eq 2) {
+                Write-Success "Phase 1 plan generated successfully"
+                
+                # Check if plan file exists
+                if (Test-Path "tfplan-phase1") {
+                    Write-Host "`n[INFO] Phase 1 plan file created: tfplan-phase1" -ForegroundColor Green
+                } else {
+                    Write-Error "Phase 1 plan file not found: tfplan-phase1"
+                    return $false
+                }
+            } else {
+                Write-Error "Phase 1 plan generation failed"
+                return $false
+            }
+            
+            if ($dryRun) {
+                Write-Success "Phase 1 dry run completed. Review the plan above."
+                return
+            }
+            
+            # Confirm deployment (unless -Force is used)
+            if (-not $force) {
+                Write-Host ""
+                Write-Warning "You are about to deploy Phase 1 to the $env environment."
+                Write-Warning "This will create independent resources (Firestore database, etc.)."
+                
+                if ($env -eq "prod") {
+                    Write-Warning "⚠️  PRODUCTION DEPLOYMENT - This affects live systems!"
+                    Write-Host ""
+                    $confirmation = Read-Host "Type 'PRODUCTION' to confirm"
+                    if ($confirmation -ne "PRODUCTION") {
+                        Write-Error "Production deployment cancelled"
+                        exit 1
+                    }
+                } else {
+                    $confirmation = Read-Host "Do you want to continue? (y/N)"
+                    if ($confirmation -notmatch "^[Yy]$") {
+                        Write-Error "Deployment cancelled"
+                        exit 1
+                    }
+                }
+            }
+            
+            # Apply Phase 1 changes
+            if (-not (Invoke-TerraformApply -planFile "tfplan-phase1" -phase "Phase 1")) {
+                exit 1
+            }
+            
+            # Clean up plan file
+            if (Test-Path "tfplan-phase1") {
+                Remove-Item "tfplan-phase1"
+            }
         }
-        
-        # Clean up plan file
-        if (Test-Path "tfplan") {
-            Remove-Item "tfplan"
+        finally {
+            Pop-Location
         }
     }
     finally {
         Pop-Location
+        
+        # Clean up temporary directory with retry logic for locked files
+        if (Test-Path $phase1Dir) {
+            Write-Status "Cleaning up temporary Phase 1 directory..."
+            
+            # Try to clean up with retry logic
+            $maxRetries = 3
+            $retryCount = 0
+            $cleanupSuccess = $false
+            
+            while (-not $cleanupSuccess -and $retryCount -lt $maxRetries) {
+                try {
+                    # Force garbage collection to release file handles
+                    [System.GC]::Collect()
+                    [System.GC]::WaitForPendingFinalizers()
+                    
+                    # Wait a moment for processes to release handles
+                    Start-Sleep -Seconds 2
+                    
+                    # Try to remove the directory
+                    Remove-Item $phase1Dir -Recurse -Force -ErrorAction Stop
+                    $cleanupSuccess = $true
+                    Write-Success "Temporary Phase 1 directory cleaned up successfully"
+                }
+                catch {
+                    $retryCount++
+                    Write-Warning "Cleanup attempt $retryCount failed. Retrying in 5 seconds..."
+                    Write-Warning "Error: $($_.Exception.Message)"
+                    
+                    if ($retryCount -lt $maxRetries) {
+                        Start-Sleep -Seconds 5
+                    }
+                }
+            }
+            
+            if (-not $cleanupSuccess) {
+                Write-Warning "Could not clean up temporary directory: $phase1Dir"
+                Write-Warning "You may need to manually delete this directory later."
+                Write-Warning "The deployment completed successfully despite the cleanup issue."
+            }
+        }
     }
 }
 
-# Function to check active gcloud project matches environment
-function Check-GCloudProject {
-    param([string]$env)
-    $envConfig = Get-EnvironmentConfig $env
-    $expectedProject = $envConfig.project_id
-    $activeProject = $(gcloud config get-value project 2>$null).Trim()
-    if ($activeProject -ne $expectedProject) {
-        Write-Error "Active gcloud project ($activeProject) does not match environment project_id ($expectedProject)."
-        Write-Error "Run: gcloud config set project $expectedProject"
-        exit 1
+# Function to deploy Phase 2 (dependent resources)
+function Deploy-Phase2 {
+    param(
+        [string]$env,
+        $force,
+        $dryRun
+    )
+    
+    Write-Status "Deploying Phase 2: Dependent resources..."
+    
+    # Change to project root
+    Push-Location $ProjectRoot
+    
+    try {
+        # Get environment configuration for backend setup
+        $envConfig = Get-EnvironmentConfig $env
+        $bucketName = $envConfig.bucket_name
+        
+        # Create temporary directory for Phase 2 deployment
+        $phase2Dir = Join-Path $ProjectRoot "temp-phase2"
+        if (Test-Path $phase2Dir) {
+            Remove-Item $phase2Dir -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $phase2Dir | Out-Null
+        
+        Write-Status "Creating Phase 2 workspace with dependent resources only..."
+        
+        # Copy only Phase 2 files to temporary directory
+        Copy-Item "main-dependent.tf" $phase2Dir
+        Copy-Item "variables.tf" $phase2Dir
+        Copy-Item "providers.tf" $phase2Dir
+        Copy-Item "versions.tf" $phase2Dir
+        Copy-Item "backend.tf" $phase2Dir
+        Copy-Item "environments" $phase2Dir -Recurse
+        Copy-Item "modules" $phase2Dir -Recurse
+        
+        # Change to Phase 2 directory
+        Push-Location $phase2Dir
+        
+        try {
+            # Check if terraform init is needed
+            if (-not (Test-Path ".terraform")) {
+                Write-Status "Initializing Terraform for Phase 2..."
+                $initResult = & terraform init -backend-config="bucket=$bucketName" -backend-config="prefix=terraform/state" 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Error "Terraform init failed: $initResult"
+                    exit 1
+                }
+            }
+            
+            # Validate Terraform configuration
+            if (-not (Invoke-TerraformWithProgress -Command "validate" -Arguments "" -Activity "Validating Terraform Configuration" -SuccessMessage "Terraform configuration is valid" -ErrorMessage "Terraform validation failed")) {
+                exit 1
+            }
+            
+            # Format Terraform code
+            Write-Status "Formatting Terraform code..."
+            terraform fmt -recursive | Out-Null
+            
+            # Generate plan for Phase 2 - Only resources from main-dependent.tf
+            Write-Status "Generating Phase 2 plan (dependent resources only)..."
+            
+            # Run terraform plan for Phase 2 (only main-dependent.tf resources)
+            Write-Host "`n[INFO] Running: terraform plan -var=`"environment=$env`" -out=`"tfplan-phase2`"`n" -ForegroundColor Cyan
+            Write-Host "Current directory: $(Get-Location)" -ForegroundColor Yellow
+            Write-Host "Files in Phase 2 directory: $(Get-ChildItem -Name)" -ForegroundColor Yellow
+            
+            # Force output to display by explicitly calling terraform and flushing output
+            $planResult = & terraform plan -var="environment=$env" -out="tfplan-phase2" -detailed-exitcode 2>&1
+            $planExitCode = $LASTEXITCODE
+            
+            # Display the plan output with proper formatting
+            $planResult -split "`n" | ForEach-Object { Write-Host $_ }
+            
+            # With -detailed-exitcode, terraform plan returns:
+            # 0 = no changes, 1 = errors, 2 = changes to apply
+            if ($planExitCode -eq 0 -or $planExitCode -eq 2) {
+                Write-Success "Phase 2 plan generated successfully"
+                
+                # Check if plan file exists
+                if (Test-Path "tfplan-phase2") {
+                    Write-Host "`n[INFO] Phase 2 plan file created: tfplan-phase2" -ForegroundColor Green
+                } else {
+                    Write-Error "Phase 2 plan file not found: tfplan-phase2"
+                    return $false
+                }
+            } else {
+                Write-Error "Phase 2 plan generation failed"
+                return $false
+            }
+            
+            if ($dryRun) {
+                Write-Success "Phase 2 dry run completed. Review the plan above."
+                return
+            }
+            
+            # Confirm deployment (unless -Force is used)
+            if (-not $force) {
+                Write-Host ""
+                Write-Warning "You are about to deploy Phase 2 to the $env environment."
+                Write-Warning "This will create Firestore indexes and dependent resources."
+                Write-Warning "Firestore indexes can take 15-45 minutes to create."
+                
+                if ($env -eq "prod") {
+                    Write-Warning "⚠️  PRODUCTION DEPLOYMENT - This affects live systems!"
+                    Write-Host ""
+                    $confirmation = Read-Host "Type 'PRODUCTION' to confirm"
+                    if ($confirmation -ne "PRODUCTION") {
+                        Write-Error "Production deployment cancelled"
+                        exit 1
+                    }
+                } else {
+                    $confirmation = Read-Host "Do you want to continue? (y/N)"
+                    if ($confirmation -notmatch "^[Yy]$") {
+                        Write-Error "Deployment cancelled"
+                        exit 1
+                    }
+                }
+            }
+            
+            # Apply Phase 2 changes
+            Write-Warning "Firestore indexes can take 15-45 minutes to create."
+            if (-not (Invoke-TerraformApply -planFile "tfplan-phase2" -phase "Phase 2")) {
+                exit 1
+            }
+            
+            # Clean up plan file
+            if (Test-Path "tfplan-phase2") {
+                Remove-Item "tfplan-phase2"
+            }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+    finally {
+        Pop-Location
+        
+        # Clean up temporary directory with retry logic for locked files
+        if (Test-Path $phase2Dir) {
+            Write-Status "Cleaning up temporary Phase 2 directory..."
+            
+            # Try to clean up with retry logic
+            $maxRetries = 3
+            $retryCount = 0
+            $cleanupSuccess = $false
+            
+            while (-not $cleanupSuccess -and $retryCount -lt $maxRetries) {
+                try {
+                    # Force garbage collection to release file handles
+                    [System.GC]::Collect()
+                    [System.GC]::WaitForPendingFinalizers()
+                    
+                    # Wait a moment for processes to release handles
+                    Start-Sleep -Seconds 2
+                    
+                    # Try to remove the directory
+                    Remove-Item $phase2Dir -Recurse -Force -ErrorAction Stop
+                    $cleanupSuccess = $true
+                    Write-Success "Temporary Phase 2 directory cleaned up successfully"
+                }
+                catch {
+                    $retryCount++
+                    Write-Warning "Cleanup attempt $retryCount failed. Retrying in 5 seconds..."
+                    Write-Warning "Error: $($_.Exception.Message)"
+                    
+                    if ($retryCount -lt $maxRetries) {
+                        Start-Sleep -Seconds 5
+                    }
+                }
+            }
+            
+            if (-not $cleanupSuccess) {
+                Write-Warning "Could not clean up temporary directory: $phase2Dir"
+                Write-Warning "You may need to manually delete this directory later."
+                Write-Warning "The deployment completed successfully despite the cleanup issue."
+            }
+        }
     }
 }
 
 # Main execution
-if ($Help) {
-    Show-Usage
-    exit 0
-}
-
-# Check dependencies
-Test-Dependencies
-
-# Check if environment is enabled
-Test-EnvironmentEnabled $Environment
-
-# Check gcloud project matches environment
-Check-GCloudProject $Environment
+Write-Status "Starting deployment to $Environment environment..."
 
 # Run preflight checks
 Invoke-PreflightChecks $Environment
@@ -282,5 +540,80 @@ Invoke-PreflightChecks $Environment
 # Backup current state
 Backup-State $Environment
 
-# Deploy to environment
-Deploy-Environment $Environment $Force $DryRun 
+# Determine which phases to deploy
+if ($Phase1 -and $Phase2) {
+    Write-Error "Cannot specify both -Phase1 and -Phase2. Choose one or neither for full deployment."
+    exit 1
+}
+
+if ($Phase1) {
+    # Deploy only Phase 1
+    Write-Status "Deploying Phase 1 only (independent resources from main-independent.tf)..."
+    Deploy-Phase1 $Environment $Force $DryRun
+    Write-Success "Phase 1 deployment to $Environment completed successfully!"
+    exit 0
+}
+
+if ($Phase2) {
+    # Deploy only Phase 2
+    Write-Status "Deploying Phase 2 only (dependent resources from main-dependent.tf)..."
+    Deploy-Phase2 $Environment $Force $DryRun
+    Write-Success "Phase 2 deployment to $Environment completed successfully!"
+    exit 0
+}
+
+# Default: Deploy both phases
+Write-Status "Deploying both phases (default behavior)..."
+Write-Status "Phase 1: Independent resources (main-independent.tf)"
+Deploy-Phase1 $Environment $Force $DryRun
+
+if ($DryRun) {
+    Write-Status "Phase 1 dry run completed. To continue with Phase 2, run: $($MyInvocation.MyCommand.Name) $Environment -Phase2"
+    exit 0
+}
+
+# Wait a bit between phases
+Write-Status "Waiting 5 seconds between phases..."
+Start-Sleep -Seconds 5
+
+# Deploy Phase 2
+Write-Status "Phase 2: Dependent resources (main-dependent.tf)"
+Deploy-Phase2 $Environment $Force $DryRun
+
+Write-Success "Full deployment to $Environment completed successfully!"
+
+# Function to manually clean up temporary directories (can be called separately)
+function Remove-TemporaryDirectories {
+    Write-Status "Cleaning up any remaining temporary directories..."
+    
+    $tempDirs = @(
+        (Join-Path $ProjectRoot "temp-phase1"),
+        (Join-Path $ProjectRoot "temp-phase2")
+    )
+    
+    foreach ($tempDir in $tempDirs) {
+        if (Test-Path $tempDir) {
+            Write-Status "Attempting to clean up: $tempDir"
+            
+            try {
+                # Force garbage collection
+                [System.GC]::Collect()
+                [System.GC]::WaitForPendingFinalizers()
+                
+                # Wait for processes to release handles
+                Start-Sleep -Seconds 3
+                
+                # Try to remove the directory
+                Remove-Item $tempDir -Recurse -Force -ErrorAction Stop
+                Write-Success "Successfully cleaned up: $tempDir"
+            }
+            catch {
+                Write-Warning "Could not clean up $tempDir : $($_.Exception.Message)"
+                Write-Warning "You may need to restart your terminal or manually delete this directory."
+            }
+        }
+    }
+}
+
+# Uncomment the line below to automatically clean up temporary directories after deployment
+# Remove-TemporaryDirectories 

@@ -10,7 +10,7 @@ The ACS infrastructure uses DynamoDB as the primary database for storing user da
 - **Billing Mode**: PAY_PER_REQUEST (on-demand)
 - **Removal Policy**: RETAIN (data preserved during deployments)
 - **Point-in-Time Recovery**: Enabled
-- **Encryption**: AWS managed keys (default)
+- **Encryption**: AWS managed keys <name>
 - **Backup**: Continuous backups enabled
 
 ## Table Details
@@ -536,7 +536,7 @@ The ACS infrastructure uses DynamoDB as the primary database for storing user da
 ## Security
 
 ### Encryption
-- **At Rest**: AWS managed keys (default)
+- **At Rest**: AWS managed keys <name>
 - **In Transit**: TLS 1.2+ encryption
 - **Customer Managed Keys**: Available for additional security
 

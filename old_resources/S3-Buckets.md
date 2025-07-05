@@ -8,7 +8,7 @@ The ACS infrastructure uses Amazon S3 for file storage, email attachments, and g
 
 ### Common Settings
 - **Versioning**: Enabled for all buckets
-- **Encryption**: S3 managed keys (default)
+- **Encryption**: S3 managed keys <name>
 - **Public Access**: Blocked for all buckets
 - **Removal Policy**: RETAIN (data preserved during deployments)
 - **Auto Delete Objects**: Disabled (data retention)
@@ -223,7 +223,7 @@ acsd2p-{stage}-email-attachments/
 ## Security Configuration
 
 ### Encryption
-- **At Rest**: S3 managed keys (default)
+- **At Rest**: S3 managed keys <name>
 - **In Transit**: TLS 1.2+ encryption
 - **Customer Managed Keys**: Available for additional security
 - **Bucket Keys**: Enabled for cost optimization
