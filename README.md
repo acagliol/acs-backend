@@ -8,7 +8,8 @@ A comprehensive Terraform infrastructure project that uses a modular approach to
 terraform-anay-test/
 ├── main.tf                    # Main Terraform configuration with modules
 ├── backend.tf                 # Backend configuration template
-├── deploy.ps1                 # PowerShell deployment script
+├── config/
+│   └── environments.json      # Environment configurations
 ├── environments/              # Environment-specific configurations
 │   ├── dev.json              # Development environment settings
 │   ├── staging.json          # Staging environment settings
@@ -22,7 +23,12 @@ terraform-anay-test/
 │   ├── identity-platform/    # Cognito equivalent (authentication)
 │   ├── cloud-kms/            # KMS equivalent (encryption)
 │   └── monitoring/           # CloudWatch equivalent (logging/monitoring)
-├── scripts/                   # Additional deployment scripts
+├── scripts/                   # Cross-platform deployment scripts
+│   ├── run                   # Python wrapper for all platforms
+│   ├── windows/              # Windows PowerShell scripts
+│   ├── mac/                  # macOS shell scripts
+│   └── linux/                # Linux shell scripts
+├── backups/                   # State backups
 └── docs/                     # Documentation
 ```
 
@@ -39,13 +45,13 @@ terraform-anay-test/
 | KMS | Cloud KMS | `cloud-kms/` | Encryption key management |
 | CloudWatch | Monitoring | `monitoring/` | Logging and monitoring |
 
-## Quick Start
+## 🚀 Quick Start
 
 ### Prerequisites
 
 1. **Terraform** (>= 1.0)
 2. **Google Cloud SDK** configured with appropriate credentials
-3. **PowerShell** (for Windows deployment scripts)
+3. **Python 3** (for cross-platform script wrapper)
 4. **GCP Project** with required APIs enabled
 
 ### Required GCP APIs
@@ -61,44 +67,128 @@ Enable these APIs in your GCP project:
 - Monitoring API
 - Compute Engine API
 
-### Deployment
+### Installation
 
-#### Using the Deployment Script (Recommended)
-
+#### Windows
 ```powershell
-# Validate configuration
-.\deploy.ps1 -Environment dev -Action validate
+# Install via Chocolatey
+choco install terraform googlecloudsdk python
 
-# Format Terraform code
-.\deploy.ps1 -Environment dev -Action fmt
-
-# Plan deployment to dev environment
-.\deploy.ps1 -Environment dev -Action plan
-
-# Apply deployment to dev environment
-.\deploy.ps1 -Environment dev -Action apply
-
-# Plan deployment to staging environment
-.\deploy.ps1 -Environment staging -Action plan
-
-# Apply deployment to staging environment
-.\deploy.ps1 -Environment staging -Action apply
-
-# Plan deployment to production (with SSH IP restrictions)
-.\deploy.ps1 -Environment prod -Action plan -AllowedSshIps "192.168.1.1","10.0.0.1"
-
-# Apply deployment to production
-.\deploy.ps1 -Environment prod -Action apply -AllowedSshIps "192.168.1.1","10.0.0.1"
-
-# Destroy resources (be careful!)
-.\deploy.ps1 -Environment dev -Action destroy
+# Or download from official sites
+# https://www.terraform.io/downloads
+# https://cloud.google.com/sdk/docs/install
 ```
 
-#### Manual Deployment
+#### macOS
+```bash
+# Install via Homebrew
+brew install terraform google-cloud-sdk python
+
+# Or download from official sites
+```
+
+#### Linux (Ubuntu/Debian)
+```bash
+# Install Terraform
+curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
+sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+sudo apt-get update && sudo apt-get install terraform
+
+# Install Google Cloud SDK
+curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+echo "deb https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+sudo apt-get update && sudo apt-get install google-cloud-sdk
+
+# Install Python 3
+sudo apt-get install python3 python3-pip
+```
+
+### Setup Google Cloud
+```bash
+# Authenticate with Google Cloud
+gcloud auth login
+
+# Set your project (replace with your project ID)
+gcloud config set project <PROJECT>
+```
+
+## 📋 Deployment
+
+### First Time Setup
+
+```bash
+# Set up your development environment
+python scripts/run setup-env dev
+
+# Set your Google Cloud project
+gcloud config set project acs-dev
+```
+
+### Available Commands
+
+All commands work on **Windows**, **macOS**, and **Linux** using the Python wrapper:
+
+```bash
+python scripts/run <command> [environment] [options]
+```
+
+#### Core Commands
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `setup-env` | Initialize a new environment | `python scripts/run setup-env dev` |
+| `validate` | Check configuration for errors | `python scripts/run validate dev` |
+| `deploy` | Deploy infrastructure | `python scripts/run deploy dev` |
+| `rollback` | Emergency rollback | `python scripts/run rollback dev` |
+| `backup-state` | Create state backup | `python scripts/run backup-state dev` |
+
+#### Command Options
+
+- `--dry-run`: Show what would be deployed (deploy command only)
+- `--force`: Skip confirmation prompts
+- `--help`: Show detailed help
+
+### Development Workflow
+
+```bash
+# 1. Set up environment (first time only)
+python scripts/run setup-env dev
+gcloud config set project acs-dev
+
+# 2. Make changes to Terraform files
+# Edit main.tf, variables.tf, etc.
+
+# 3. Validate changes
+python scripts/run validate dev
+
+# 4. Deploy with dry-run first
+python scripts/run deploy dev --dry-run
+
+# 5. Deploy to development
+python scripts/run deploy dev
+```
+
+### Staging/Production Deployment
+
+```bash
+# 1. Set correct project
+gcloud config set project terraform-anay-staging  # or terraform-anay-prod
+
+# 2. Validate configuration
+python scripts/run validate staging
+
+# 3. Deploy (requires confirmation for production)
+python scripts/run deploy staging
+```
+
+### Manual Deployment (Alternative)
+
+If you prefer to run Terraform commands directly:
 
 ```bash
 # Set environment variable
-$env:TF_VAR_environment = "dev"
+$env:TF_VAR_environment = "dev"  # Windows
+export TF_VAR_environment="dev"   # macOS/Linux
 
 # Initialize Terraform
 terraform init
@@ -110,9 +200,22 @@ terraform plan -var="environment=dev"
 terraform apply -var="environment=dev" -auto-approve
 ```
 
-## Environment Configuration
+## 🔧 Environment Configuration
 
-Each environment has its own JSON configuration file in the `environments/` directory. The configuration includes settings for all modules:
+The project supports three environments with different configurations:
+
+| Environment | Project ID | Machine Type | Purpose |
+|-------------|------------|--------------|---------|
+| `dev` | `acs-dev` | `e2-micro` | Development & testing |
+| `staging` | `terraform-anay-staging` | `e2-small` | Pre-production testing |
+| `prod` | `terraform-anay-prod` | `e2-standard-2` | Production |
+
+### Environment-Specific Settings
+
+Each environment has its own:
+- **GCP Project**: Isolated resources and billing
+- **State Bucket**: Separate Terraform state storage
+- **Resource Configuration**: Different machine types, regions, etc.
 
 ### Development (`environments/dev.json`)
 - Minimal resource configurations
@@ -131,6 +234,14 @@ Each environment has its own JSON configuration file in the `environments/` dire
 - High availability setups
 - Comprehensive monitoring
 - Restricted access with IP whitelisting
+
+## 🛡️ Safety Features
+
+- **Automatic state backups** before deployments
+- **Production confirmation** - requires typing "PRODUCTION" for prod deployments
+- **Project validation** - ensures you're deploying to the correct GCP project
+- **Preflight checks** - validates dependencies and configuration
+- **Rollback capability** - emergency rollback if needed
 
 ## Module Overview
 
@@ -198,105 +309,62 @@ Each environment has its own JSON configuration file in the `environments/` dire
 
 ### Cost Optimization
 - Environment-specific resource sizing
-- Conditional resource creation
-- Lifecycle policies for storage optimization
-- Monitoring for cost tracking
+- Development environments use minimal resources
+- Staging environments mirror production at reduced scale
+- Production environments optimized for performance
 
-## Safety Features
-
-### Production Protection
-- Manual confirmation required for production deployments
-- `prevent_destroy` lifecycle rules for production resources
-- SSH access restricted to specific IP addresses
-- Separate state management per environment
-
-### Deployment Safety
-- Plan review before apply
-- Staging testing before production
-- Rollback procedures available
-- State backups and validation
-
-## Configuration
-
-### Adding New Environments
-
-1. Create a new JSON file in `environments/` directory
-2. Follow the existing configuration structure
-3. Configure all required modules for the environment
-
-### Modifying Environment Settings
-
-Edit the appropriate JSON file in `environments/`:
-- `dev.json` for development settings
-- `staging.json` for staging settings
-- `prod.json` for production settings
-
-### Adding New Modules
-
-1. Create a new module directory in `modules/`
-2. Define variables, resources, and outputs
-3. Add module call to `main.tf`
-4. Update environment JSON files with configuration
-5. Add outputs to main configuration
-
-## Migration from AWS
-
-### Migration Steps
-
-1. **Inventory AWS Resources**: Document all existing resources
-2. **Create GCP Project**: Set up project with appropriate IAM
-3. **Configure Environment Files**: Create JSON configs for each environment
-4. **Deploy Modules**: Start with core services (Firestore, Cloud Functions)
-5. **Test Integration**: Verify services work together
-6. **Migrate Data**: Transfer data from AWS to GCP
-7. **Update Applications**: Modify code to use GCP services
-8. **Cutover**: Switch traffic from AWS to GCP
-
-### Service Migration Order
-
-1. **Database**: Migrate DynamoDB to Firestore
-2. **Storage**: Migrate S3 to Cloud Storage
-3. **Functions**: Migrate Lambda to Cloud Functions
-4. **API**: Migrate API Gateway
-5. **Queues**: Migrate SQS to Pub/Sub
-6. **Auth**: Migrate Cognito to Identity Platform
-7. **Monitoring**: Migrate CloudWatch to Monitoring
-8. **Encryption**: Migrate KMS to Cloud KMS
-
-## Troubleshooting
+## 🚨 Troubleshooting
 
 ### Common Issues
 
-1. **Module not found**
-   - Ensure module directory exists in `modules/`
-   - Check module source path in `main.tf`
+#### "Active gcloud project does not match"
+```bash
+# Fix: Set the correct project for your environment
+gcloud config set project acs-dev              # for dev
+gcloud config set project terraform-anay-staging  # for staging
+gcloud config set project terraform-anay-prod     # for prod
+```
 
-2. **Environment configuration not found**
-   - Verify JSON file exists in `environments/` directory
-   - Check JSON syntax and structure
+#### "Terraform validation failed"
+```bash
+# Fix: Run validation to see specific errors
+python scripts/run validate dev
+```
 
-3. **API not enabled**
-   - Enable required APIs in GCP project
-   - Check service account permissions
+#### "Missing required dependencies"
+```bash
+# Fix: Install missing tools
+# Windows: choco install terraform googlecloudsdk python
+# macOS: brew install terraform google-cloud-sdk python
+# Linux: Follow installation instructions above
+```
 
-4. **Production deployment blocked**
-   - Ensure you have admin permissions
-   - Provide SSH IP addresses for production
+#### "No active Google Cloud authentication found"
+```bash
+# Fix: Authenticate with Google Cloud
+gcloud auth login
+```
 
-### Getting Help
+### Emergency Rollback
 
-- Check the `modules/README.md` for detailed module documentation
-- Review the AI editing guide in `docs/ai-editing-guide.md`
-- Consult the Terraform backend plan in `docs/terraform-backend-plan.md`
+If a deployment fails or causes issues:
+
+```bash
+# Rollback to previous state
+python scripts/run rollback dev
+
+# Or manually restore from backup
+# Check backups/ directory for available backups
+```
 
 ## Contributing
 
-1. Follow the AI editing guide in `docs/ai-editing-guide.md`
-2. Test changes in development environment first
-3. Get approval for staging and production changes
-4. Update documentation as needed
-5. Use the modular structure for new features
+1. Make changes to Terraform configurations
+2. Test in development environment first
+3. Validate changes: `python scripts/run validate dev`
+4. Deploy to staging for testing
+5. Deploy to production after approval
 
 ## License
 
-This project is for internal use only. 
+This project is licensed under the MIT License - see the LICENSE file for details. 

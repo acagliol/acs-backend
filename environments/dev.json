@@ -7,26 +7,7 @@
   "firestore": {
     "database_id": "(default)",
     "location_id": "us-central1",
-    "database_type": "FIRESTORE_NATIVE",
-    "collections": {
-      "users": {
-        "name": "users",
-        "fields": {
-          "email": { "type": "string" },
-          "name": { "type": "string" },
-          "created_at": { "type": "timestamp" }
-        }
-      },
-      "emails": {
-        "name": "emails",
-        "fields": {
-          "from": { "type": "string" },
-          "to": { "type": "string" },
-          "subject": { "type": "string" },
-          "received_at": { "type": "timestamp" }
-        }
-      }
-    }
+    "database_type": "FIRESTORE_NATIVE"
   },
   
   "cloud_functions": {
@@ -46,7 +27,7 @@
         },
         "environment_variables": {
           "ENVIRONMENT": "dev",
-          "FIRESTORE_COLLECTION": "emails"
+          "FIRESTORE_COLLECTION": "conversations"
         },
         "memory_mb": 512,
         "timeout_seconds": 300
@@ -200,16 +181,21 @@
   "cloud_kms": {
     "region": "us-central1",
     "keyrings": {
-      "app_keys": {
-        "name": "app-keys",
-        "description": "Application encryption keys",
-        "keys": {
+      "lcp_keyring": {
+        "name": "lcp-keyring",
+        "description": "Keyring for LCP encryption",
+        "crypto_keys": {
           "data_encryption": {
             "name": "data-encryption",
             "purpose": "ENCRYPT_DECRYPT",
-            "algorithm": "GOOGLE_SYMMETRIC_ENCRYPTION",
-            "protection_level": "SOFTWARE",
-            "rotation_period": "7776000s"
+            "rotation_period": "7776000s",
+            "description": "Key for encrypting LCP data"
+          },
+          "api_keys": {
+            "name": "api-keys",
+            "purpose": "ENCRYPT_DECRYPT",
+            "rotation_period": "2592000s",
+            "description": "Key for API key management"
           }
         }
       }
@@ -219,12 +205,15 @@
   "monitoring": {
     "region": "us-central1",
     "monitoring_config": {
-      "enable_logging": true,
-      "enable_monitoring": true,
       "log_sinks": {
-        "audit_logs": {
-          "name": "audit-logs",
-          "destination": "storage.googleapis.com/audit-logs-bucket-dev",
+        "firestore_logs": {
+          "name": "firestore-logs",
+          "destination": "storage.googleapis.com/lcp-logs-bucket-dev",
+          "filter": "resource.type=\"cloud_firestore_database\""
+        },
+        "function_logs": {
+          "name": "function-logs",
+          "destination": "storage.googleapis.com/lcp-logs-bucket-dev",
           "filter": "resource.type=\"cloud_function\""
         }
       },
@@ -232,37 +221,14 @@
         "api_health": {
           "display_name": "API Health Check",
           "timeout": "10s",
-          "period": "60s",
-          "http_check": {
-            "path": "/health",
-            "port": 443,
-            "use_ssl": true,
-            "validate_ssl": true
-          }
+          "check_interval": "60s"
         }
       },
       "alerting_policies": {
         "high_error_rate": {
           "display_name": "High Error Rate",
-          "combiner": "OR",
-          "conditions": [
-            {
-              "display_name": "Error Rate > 5%",
-              "condition_threshold": {
-                "filter": "metric.type=\"cloudfunctions.googleapis.com/function/execution_count\" AND resource.type=\"cloud_function\"",
-                "duration": "300s",
-                "comparison": "COMPARISON_GREATER_THAN",
-                "threshold_value": 0.05,
-                "aggregations": [
-                  {
-                    "alignment_period": "60s",
-                    "per_series_aligner": "ALIGN_RATE",
-                    "cross_series_reducer": "REDUCE_MEAN"
-                  }
-                ]
-              }
-            }
-          ]
+          "condition": "error_rate > 0.05",
+          "notification_channels": ["email"]
         }
       }
     }

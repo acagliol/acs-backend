@@ -1,0 +1,13 @@
+﻿{
+    "timestamp":  "20250704_233324",
+    "backup_notes":  "",
+    "backup_files":  [
+                         "remote_state_backup.20250704_233324",
+                         "terraform.tfstate.backup.20250704_233324",
+                         "terraform.tfstate.backup.20250704_233324.backup"
+                     ],
+    "backup_date":  "2025-07-04 23:33:26",
+    "gcloud_version":  "",
+    "terraform_version":  "1.12.2",
+    "environment":  "dev"
+}

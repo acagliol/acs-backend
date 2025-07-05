@@ -57,13 +57,12 @@ provider "google-beta" {
 # =============================================================================
 module "firestore" {
   source = "./modules/firestore"
-  
-  project_id   = local.env_config.project_id
-  environment  = local.environment
-  database_id  = local.env_config.firestore.database_id
-  location_id  = local.env_config.firestore.location_id
+
+  project_id    = local.env_config.project_id
+  environment   = local.environment
+  database_id   = local.env_config.firestore.database_id
+  location_id   = local.env_config.firestore.location_id
   database_type = local.env_config.firestore.database_type
-  collections  = local.env_config.firestore.collections
 }
 
 # =============================================================================
@@ -71,7 +70,7 @@ module "firestore" {
 # =============================================================================
 module "cloud_functions" {
   source = "./modules/cloud-functions"
-  
+
   project_id  = local.env_config.project_id
   environment = local.environment
   region      = local.env_config.cloud_functions.region
@@ -83,7 +82,7 @@ module "cloud_functions" {
 # =============================================================================
 module "api_gateway" {
   source = "./modules/api-gateway"
-  
+
   project_id  = local.env_config.project_id
   environment = local.environment
   region      = local.env_config.api_gateway.region
@@ -95,7 +94,7 @@ module "api_gateway" {
 # =============================================================================
 module "cloud_storage" {
   source = "./modules/cloud-storage"
-  
+
   project_id  = local.env_config.project_id
   environment = local.environment
   region      = local.env_config.cloud_storage.region
@@ -107,12 +106,12 @@ module "cloud_storage" {
 # =============================================================================
 module "pub_sub" {
   source = "./modules/pub-sub"
-  
-  project_id     = local.env_config.project_id
-  environment    = local.environment
-  region         = local.env_config.pub_sub.region
-  topics         = local.env_config.pub_sub.topics
-  subscriptions  = local.env_config.pub_sub.subscriptions
+
+  project_id    = local.env_config.project_id
+  environment   = local.environment
+  region        = local.env_config.pub_sub.region
+  topics        = local.env_config.pub_sub.topics
+  subscriptions = local.env_config.pub_sub.subscriptions
 }
 
 # =============================================================================
@@ -120,10 +119,10 @@ module "pub_sub" {
 # =============================================================================
 module "identity_platform" {
   source = "./modules/identity-platform"
-  
-  project_id  = local.env_config.project_id
-  environment = local.environment
-  region      = local.env_config.identity_platform.region
+
+  project_id               = local.env_config.project_id
+  environment              = local.environment
+  region                   = local.env_config.identity_platform.region
   identity_platform_config = local.env_config.identity_platform.identity_platform_config
 }
 
@@ -132,7 +131,7 @@ module "identity_platform" {
 # =============================================================================
 module "cloud_kms" {
   source = "./modules/cloud-kms"
-  
+
   project_id  = local.env_config.project_id
   environment = local.environment
   region      = local.env_config.cloud_kms.region
@@ -144,10 +143,10 @@ module "cloud_kms" {
 # =============================================================================
 module "monitoring" {
   source = "./modules/monitoring"
-  
-  project_id  = local.env_config.project_id
-  environment = local.environment
-  region      = local.env_config.monitoring.region
+
+  project_id        = local.env_config.project_id
+  environment       = local.environment
+  region            = local.env_config.monitoring.region
   monitoring_config = local.env_config.monitoring.monitoring_config
 }
 
@@ -166,7 +165,7 @@ resource "google_compute_network" "vpc" {
 # Subnet
 resource "google_compute_subnetwork" "subnet" {
   name          = "subnet-${local.environment}"
-  ip_cidr_range = "10.0.1.0/24"  # You can add this to your JSON config
+  ip_cidr_range = "10.0.1.0/24" # You can add this to your JSON config
   network       = google_compute_network.vpc.id
   region        = local.env_config.region
   project       = local.env_config.project_id
@@ -215,6 +214,11 @@ output "firestore_database_name" {
 output "firestore_collections" {
   description = "List of Firestore collections"
   value       = module.firestore.collection_names
+}
+
+output "firestore_lcp_collections" {
+  description = "LCP-specific collection configurations"
+  value       = module.firestore.lcp_collections
 }
 
 # Cloud Functions outputs
@@ -286,12 +290,12 @@ output "kms_crypto_key_names" {
 # Monitoring outputs
 output "monitoring_log_sinks" {
   description = "Names of the created log sinks"
-  value       = module.monitoring.log_sink_names
+  value       = module.monitoring.log_sinks
 }
 
 output "monitoring_uptime_checks" {
   description = "Names of the created uptime checks"
-  value       = module.monitoring.uptime_check_names
+  value       = module.monitoring.uptime_checks
 }
 
 # Networking outputs
@@ -313,7 +317,7 @@ variable "environment" {
   description = "Environment to deploy (dev, staging, prod)"
   type        = string
   default     = "dev"
-  
+
   validation {
     condition     = contains(["dev", "staging", "prod"], var.environment)
     error_message = "Environment must be dev, staging, or prod."
