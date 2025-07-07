@@ -6,12 +6,15 @@ A comprehensive Terraform infrastructure project that uses a modular approach to
 
 ```
 terraform-anay-test/
-├── main-independent.tf        # Phase 1: Independent resources (database, storage, networking)
-├── main-dependent.tf          # Phase 2: Dependent resources (modules, functions, monitoring)
+├── main.tf                    # Main Terraform configuration (consolidated)
 ├── variables.tf               # Variable declarations
 ├── backend.tf                 # Backend configuration template
 ├── providers.tf               # Provider configuration
 ├── versions.tf                # Version constraints
+├── deploy                     # Cross-platform deployment wrapper
+├── scripts/                   # Deployment scripts
+│   ├── deploy.ps1             # Windows PowerShell deployment script
+│   └── deploy.sh              # Linux/Mac bash deployment script
 ├── config/                    # Environment configurations
 │   ├── backend-dev.tf         # Development backend configuration
 │   ├── backend-staging.tf     # Staging backend configuration
@@ -19,11 +22,6 @@ terraform-anay-test/
 │   ├── dev.tfvars             # Development environment variables
 │   ├── staging.tfvars         # Staging environment variables
 │   └── prod.tfvars            # Production environment variables
-├── scripts/                   # Deployment scripts
-│   ├── deploy.ps1             # Unified Windows deployment script
-│   ├── deploy.sh              # Unified Unix deployment script
-│   ├── windows/               # Windows-specific scripts (legacy)
-│   └── unix/                  # Unix-specific scripts (legacy)
 ├── environments/              # Environment-specific configurations
 │   ├── dev.json              # Development environment settings
 │   ├── staging.json          # Staging environment settings
@@ -56,7 +54,7 @@ terraform-anay-test/
 | KMS | Cloud KMS | `cloud-kms/` | Encryption key management |
 | CloudWatch | Monitoring | `monitoring/` | Logging and monitoring |
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -119,13 +117,28 @@ gcloud auth login
 gcloud config set project <PROJECT>
 ```
 
-## 📋 Deployment
+## Deployment
 
 ### Simple Deployment Commands
 
-The easiest way to deploy is using the unified deployment scripts:
+The easiest way to deploy is using the unified cross-platform deployment script:
 
-#### Windows PowerShell
+#### All Platforms (Recommended)
+```bash
+# Development
+python deploy dev
+
+# Staging
+python deploy staging
+
+# Production
+python deploy prod
+```
+
+#### Platform-Specific Scripts (Alternative)
+If you prefer to use platform-specific scripts directly:
+
+##### Windows PowerShell
 ```powershell
 # Development
 .\scripts\deploy.ps1 -Environment dev
@@ -137,7 +150,7 @@ The easiest way to deploy is using the unified deployment scripts:
 .\scripts\deploy.ps1 -Environment prod
 ```
 
-#### macOS/Linux
+##### macOS/Linux
 ```bash
 # Development
 ./scripts/deploy.sh dev
@@ -163,9 +176,9 @@ All deployments use standard Terraform commands:
 |---------|-------------|---------|
 | `terraform init` | Initialize Terraform | `terraform init` |
 | `terraform validate` | Check configuration for errors | `terraform validate` |
-| `terraform plan` | Show deployment plan | `terraform plan -var-file="dev.tfvars"` |
-| `terraform apply` | Deploy infrastructure | `terraform apply -var-file="dev.tfvars"` |
-| `terraform destroy` | Remove infrastructure | `terraform destroy -var-file="dev.tfvars"` |
+| `terraform plan` | Show deployment plan | `terraform plan -var="environment=dev"` |
+| `terraform apply` | Deploy infrastructure | `terraform apply -var="environment=dev"` |
+| `terraform destroy` | Remove infrastructure | `terraform destroy -var="environment=dev"` |
 
 ### Development Workflow
 
@@ -175,7 +188,7 @@ All deployments use standard Terraform commands:
 cp config/backend-dev.tf backend.tf
 
 # 2. Make changes to Terraform files
-# Edit main-independent.tf, main-dependent.tf, variables.tf, etc.
+# Edit main.tf, variables.tf, etc.
 
 # 3. Initialize Terraform
 terraform init
@@ -184,10 +197,10 @@ terraform init
 terraform validate
 
 # 5. Plan deployment
-terraform plan -var-file="config/dev.tfvars"
+terraform plan -var="environment=dev"
 
 # 6. Deploy to development
-terraform apply -var-file="config/dev.tfvars"
+terraform apply -var="environment=dev"
 ```
 
 ### Staging/Production Deployment
@@ -199,71 +212,9 @@ cp config/backend-staging.tf backend.tf  # or config/backend-prod.tf for product
 # 2. Initialize Terraform
 terraform init
 
-# 3. Validate configuration
-terraform validate
-
-# 4. Plan deployment
-terraform plan -var-file="config/staging.tfvars"  # or config/prod.tfvars
-
-# 5. Deploy (requires confirmation for production)
-terraform apply -var-file="config/staging.tfvars"  # or config/prod.tfvars
-```
-
-### Environment-Specific Configuration Files
-
-Each environment has its own configuration files:
-
-| Environment | Variables File | Backend File | Backend Bucket |
-|-------------|----------------|--------------|----------------|
-| `dev` | `config/dev.tfvars` | `config/backend-dev.tf` | `tf-state-dev-2` |
-| `staging` | `config/staging.tfvars` | `config/backend-staging.tf` | `tf-state-staging-2` |
-| `prod` | `config/prod.tfvars` | `config/backend-prod.tf` | `tf-state-prod-2` |
-
-### Complete Deployment Examples
-
-#### Development Environment
-```bash
-# Windows PowerShell
-cp config/backend-dev.tf backend.tf
-terraform init
-terraform plan -var-file="config/dev.tfvars"
-terraform apply -var-file="config/dev.tfvars"
-
-# macOS/Linux
-cp config/backend-dev.tf backend.tf
-terraform init
-terraform plan -var-file="config/dev.tfvars"
-terraform apply -var-file="config/dev.tfvars"
-```
-
-#### Staging Environment
-```bash
-# Windows PowerShell
-cp config/backend-staging.tf backend.tf
-terraform init
-terraform plan -var-file="config/staging.tfvars"
-terraform apply -var-file="config/staging.tfvars"
-
-# macOS/Linux
-cp config/backend-staging.tf backend.tf
-terraform init
-terraform plan -var-file="config/staging.tfvars"
-terraform apply -var-file="config/staging.tfvars"
-```
-
-#### Production Environment
-```bash
-# Windows PowerShell
-cp config/backend-prod.tf backend.tf
-terraform init
-terraform plan -var-file="config/prod.tfvars"
-terraform apply -var-file="config/prod.tfvars"
-
-# macOS/Linux
-cp config/backend-prod.tf backend.tf
-terraform init
-terraform plan -var-file="config/prod.tfvars"
-terraform apply -var-file="config/prod.tfvars"
+# 3. Plan and apply
+terraform plan -var="environment=staging"
+terraform apply -var="environment=staging"
 ```
 
 ## 🔧 Environment Configuration
@@ -383,24 +334,4 @@ terraform force-unlock <LOCK_ID>
 ```
 
 #### "Backend configuration error"
-```bash
-# Fix: Reinitialize with correct backend configuration
-terraform init -backend-config="bucket=tf-state-{environment}-2" -backend-config="prefix=terraform/state"
 ```
-
-## 📚 Additional Documentation
-
-- **`docs/backend-resource-desc.md`**: Detailed resource descriptions
-- **`modules/README.md`**: Module-specific documentation
-
-## 🤝 Contributing
-
-1. Make changes in the development environment first
-2. Test thoroughly in staging before production
-3. Follow the established naming conventions
-4. Update documentation for any changes
-5. Use standard Terraform commands for deployment
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details. 

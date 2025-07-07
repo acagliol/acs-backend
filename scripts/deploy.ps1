@@ -1,8 +1,8 @@
 # =============================================================================
-# UNIFIED DEPLOYMENT SCRIPT
+# SIMPLIFIED DEPLOYMENT SCRIPT (Windows)
 # =============================================================================
-# This script deploys to any environment (dev, staging, prod)
-# Usage: .\scripts\deploy.ps1 -Environment dev|staging|prod
+# This script deploys to any environment using the consolidated main.tf
+# Usage: .\deploy.ps1 -Environment dev|staging|prod
 
 param(
     [Parameter(Mandatory=$true)]
@@ -34,27 +34,41 @@ $Config = @{
 
 $EnvConfig = $Config[$Environment]
 
-Write-Host "🚀 Deploying to $Environment Environment..." -ForegroundColor $EnvConfig.Color
+Write-Host "Deploying to $Environment Environment..." -ForegroundColor $EnvConfig.Color
 
 # Production safety check
 if ($EnvConfig.RequireConfirmation) {
-    $confirmation = Read-Host "Are you sure you want to deploy to $Environment environment? (yes/no)"
+    Write-Host "This will deploy to $Environment environment" -ForegroundColor $EnvConfig.Color
+    $confirmation = Read-Host "Are you sure you want to continue? (yes/no)"
     if ($confirmation -ne "yes") {
-        Write-Host "❌ Deployment cancelled by user." -ForegroundColor Red
+        Write-Host "Deployment cancelled by user." -ForegroundColor Red
         exit 1
     }
 }
 
 # Check if we're in the correct directory
-if (-not (Test-Path "main-independent.tf")) {
-    Write-Host "❌ Error: main-independent.tf not found. Please run this script from the project root directory." -ForegroundColor Red
-    exit 1
+$ProjectRoot = Get-Location
+if (-not (Test-Path "main.tf")) {
+    # Try going up one level if we're in the scripts directory
+    if (Test-Path "..\main.tf") {
+        Set-Location ".."
+        $ProjectRoot = Get-Location
+    } else {
+        Write-Host "Error: main.tf not found. Please run this script from the project root directory." -ForegroundColor Red
+        exit 1
+    }
 }
 
 # Check if environment configuration exists
 $envConfigPath = "environments\$Environment.json"
 if (-not (Test-Path $envConfigPath)) {
-    Write-Host "❌ Error: Environment configuration file not found: $envConfigPath" -ForegroundColor Red
+    Write-Host "Error: Environment configuration file not found: $envConfigPath" -ForegroundColor Red
+    exit 1
+}
+
+# Check if backend configuration exists
+if (-not (Test-Path $EnvConfig.BackendFile)) {
+    Write-Host "Error: Backend configuration file not found: $($EnvConfig.BackendFile)" -ForegroundColor Red
     exit 1
 }
 
@@ -66,7 +80,8 @@ try {
         throw "Failed to set GCP project"
     }
 } catch {
-    Write-Host "❌ Error setting GCP project: $_" -ForegroundColor Red
+    Write-Host "Error setting GCP project: $_" -ForegroundColor Red
+    Write-Host "Make sure gcloud is installed and you're authenticated: gcloud auth login" -ForegroundColor Cyan
     exit 1
 }
 
@@ -78,7 +93,7 @@ try {
         throw "Failed to copy backend configuration"
     }
 } catch {
-    Write-Host "❌ Error copying backend configuration: $_" -ForegroundColor Red
+    Write-Host "Error copying backend configuration: $_" -ForegroundColor Red
     exit 1
 }
 
@@ -90,44 +105,115 @@ try {
         throw "Terraform initialization failed"
     }
 } catch {
-    Write-Host "❌ Error initializing Terraform: $_" -ForegroundColor Red
+    Write-Host "Error initializing Terraform: $_" -ForegroundColor Red
     exit 1
 }
 
-# Validate configuration
-Write-Host "Validating configuration..." -ForegroundColor Yellow
+# Format and validate configuration
+Write-Host "Formatting and validating configuration..." -ForegroundColor Yellow
 try {
+    terraform fmt
     terraform validate
     if ($LASTEXITCODE -ne 0) {
         throw "Terraform validation failed"
     }
 } catch {
-    Write-Host "❌ Error validating Terraform configuration: $_" -ForegroundColor Red
+    Write-Host "Error validating Terraform configuration: $_" -ForegroundColor Red
     exit 1
 }
 
 # Plan deployment
 Write-Host "Planning deployment..." -ForegroundColor Yellow
 try {
-    terraform plan -var="environment=$Environment"
+    terraform plan -var="environment=$Environment" -out=tfplan
     if ($LASTEXITCODE -ne 0) {
         throw "Terraform plan failed"
     }
 } catch {
-    Write-Host "❌ Error planning deployment: $_" -ForegroundColor Red
+    Write-Host "Error planning deployment: $_" -ForegroundColor Red
     exit 1
+}
+
+# Create state backup before applying
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$username = $env:USERNAME
+$backupDir = "backups\$Environment\$timestamp-$username"
+$backupFile = "$backupDir\terraform.tfstate.backup.$timestamp"
+
+Write-Host "Creating state backup..." -ForegroundColor Yellow
+try {
+    # Create backup directory
+    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+    
+    # Create backup manifest
+    $backupManifest = @{
+        timestamp = $timestamp
+        environment = $Environment
+        username = $username
+        backup_file = $backupFile
+        terraform_version = (terraform version -json | ConvertFrom-Json).terraform_version
+        project = $EnvConfig.Project
+    }
+    
+    $backupManifest | ConvertTo-Json | Out-File "$backupDir\backup_manifest.$timestamp.json"
+    
+    # Pull current state and save as backup
+    terraform state pull > $backupFile
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create state backup"
+    }
+    
+    Write-Host "State backup created: $backupFile" -ForegroundColor Green
+} catch {
+    Write-Host "Error creating state backup: $_" -ForegroundColor Red
+    Write-Host "Continuing without backup (not recommended for production)" -ForegroundColor Yellow
 }
 
 # Apply changes
 Write-Host "Applying changes..." -ForegroundColor Yellow
 try {
-    terraform apply -var="environment=$Environment" -auto-approve
+    terraform apply tfplan
     if ($LASTEXITCODE -ne 0) {
         throw "Terraform apply failed"
     }
 } catch {
-    Write-Host "❌ Error applying changes: $_" -ForegroundColor Red
+    Write-Host "Error applying changes: $_" -ForegroundColor Red
+    
+    # Attempt rollback if backup exists
+    if (Test-Path $backupFile) {
+        Write-Host "Attempting to rollback to previous state..." -ForegroundColor Yellow
+        try {
+            # Push the backup state back
+            Get-Content $backupFile | terraform state push -
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "Rollback successful! State restored to backup from $timestamp" -ForegroundColor Green
+                Write-Host "Backup location: $backupFile" -ForegroundColor Cyan
+            } else {
+                Write-Host "Rollback failed! Manual intervention required." -ForegroundColor Red
+                Write-Host "Backup state available at: $backupFile" -ForegroundColor Cyan
+                Write-Host "You may need to manually restore the state or destroy/recreate resources." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "Rollback failed with error: $_" -ForegroundColor Red
+            Write-Host "Backup state available at: $backupFile" -ForegroundColor Cyan
+            Write-Host "Manual intervention required to restore state." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "No backup available for rollback. Manual intervention required." -ForegroundColor Red
+    }
+    
+    # Clean up plan file
+    if (Test-Path "tfplan") {
+        Remove-Item "tfplan"
+    }
+    
     exit 1
 }
 
-Write-Host "✅ $Environment deployment completed successfully!" -ForegroundColor Green 
+# Clean up plan file
+if (Test-Path "tfplan") {
+    Remove-Item "tfplan"
+}
+
+Write-Host "$Environment deployment completed successfully!" -ForegroundColor Green
+Write-Host "Run 'terraform output' to see deployment results." -ForegroundColor Cyan 

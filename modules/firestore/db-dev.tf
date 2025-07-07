@@ -47,6 +47,12 @@ variable "database_name" {
   type        = string
 }
 
+variable "database_id" {
+  description = "The ID of the Firestore database resource to depend on"
+  type        = string
+  default     = ""
+}
+
 # Locals
 locals {
   common_labels = {
@@ -56,14 +62,20 @@ locals {
   }
 }
 
-# Firestore Database
-# Note: Lifecycle rules cannot use variables in Terraform
-# For production protection, consider:
-# 1. Using separate Terraform workspaces for different environments
-# 2. Implementing deployment scripts with environment checks
-# 3. Using Terraform Cloud/Enterprise with policy controls
-# 4. Setting up branch protection rules in version control
-
+# =============================================================================
+# DATABASE READINESS CHECK
+# =============================================================================
+# Add a time delay to ensure the database is fully created before creating indexes
+resource "time_sleep" "wait_for_database" {
+  create_duration = "30s"
+  
+  lifecycle {
+    precondition {
+      condition     = var.database_id != ""
+      error_message = "Database ID must be provided to ensure proper dependency ordering."
+    }
+  }
+}
 
 # =============================================================================
 # LCP COLLECTIONS - DEFINED DIRECTLY IN MODULE
@@ -90,6 +102,8 @@ resource "google_firestore_index" "conversations_org_time" { # This is a composi
   collection = "conversations"
   database   = var.database_name
 
+  depends_on = [time_sleep.wait_for_database]
+
   fields {
     field_path = "organization_id" # first part of the composite index
     order      = "ASCENDING"
@@ -108,6 +122,8 @@ resource "google_firestore_index" "conversations_account_time" {
   collection = "conversations"
   database   = var.database_name
 
+  depends_on = [time_sleep.wait_for_database]
+
   fields {
     field_path = "associated_account"
     order      = "ASCENDING"
@@ -123,6 +139,8 @@ resource "google_firestore_index" "conversations_conv_status" {
   project    = var.project_id
   collection = "conversations"
   database   = var.database_name
+
+  depends_on = [time_sleep.wait_for_database]
 
   fields {
     field_path = "conversation_id"
@@ -140,6 +158,8 @@ resource "google_firestore_index" "threads_org_status" {
   project    = var.project_id
   collection = "threads"
   database   = var.database_name
+
+  depends_on = [time_sleep.wait_for_database]
 
   fields {
     field_path = "organization_id"
@@ -162,6 +182,8 @@ resource "google_firestore_index" "threads_account_status" {
   collection = "threads"
   database   = var.database_name
 
+  depends_on = [time_sleep.wait_for_database]
+
   fields {
     field_path = "associated_account"
     order      = "ASCENDING"
@@ -182,6 +204,8 @@ resource "google_firestore_index" "threads_org_flag" {
   project    = var.project_id
   collection = "threads"
   database   = var.database_name
+
+  depends_on = [time_sleep.wait_for_database]
 
   fields {
     field_path = "organization_id"
@@ -205,6 +229,8 @@ resource "google_firestore_index" "ev_data_org_score" {
   collection = "ev_data"
   database   = var.database_name
 
+  depends_on = [time_sleep.wait_for_database]
+
   fields {
     field_path = "organization_id"
     order      = "ASCENDING"
@@ -220,6 +246,8 @@ resource "google_firestore_index" "ev_data_org_date" {
   project    = var.project_id
   collection = "ev_data"
   database   = var.database_name
+
+  depends_on = [time_sleep.wait_for_database]
 
   fields {
     field_path = "organization_id"
@@ -237,6 +265,8 @@ resource "google_firestore_index" "llm_data_org_model" {
   project    = var.project_id
   collection = "llm_data"
   database   = var.database_name
+
+  depends_on = [time_sleep.wait_for_database]
 
   fields {
     field_path = "organization_id"
@@ -258,6 +288,8 @@ resource "google_firestore_index" "llm_data_org_function" {
   project    = var.project_id
   collection = "llm_data"
   database   = var.database_name
+
+  depends_on = [time_sleep.wait_for_database]
 
   fields {
     field_path = "organization_id"
@@ -281,6 +313,8 @@ resource "google_firestore_index" "reports_org_type" {
   collection = "reports"
   database   = var.database_name
 
+  depends_on = [time_sleep.wait_for_database]
+
   fields {
     field_path = "organization_id"
     order      = "ASCENDING"
@@ -301,6 +335,8 @@ resource "google_firestore_index" "reports_org_period" {
   project    = var.project_id
   collection = "reports"
   database   = var.database_name
+
+  depends_on = [time_sleep.wait_for_database]
 
   fields {
     field_path = "organization_id"
@@ -324,6 +360,8 @@ resource "google_firestore_index" "invocations_org_function" {
   collection = "invocations"
   database   = var.database_name
 
+  depends_on = [time_sleep.wait_for_database]
+
   fields {
     field_path = "organization_id"
     order      = "ASCENDING"
@@ -344,6 +382,8 @@ resource "google_firestore_index" "invocations_org_status" {
   project    = var.project_id
   collection = "invocations"
   database   = var.database_name
+
+  depends_on = [time_sleep.wait_for_database]
 
   fields {
     field_path = "organization_id"

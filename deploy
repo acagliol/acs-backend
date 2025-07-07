@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""
+=============================================================================
+SIMPLE DEPLOYMENT WRAPPER
+=============================================================================
+Simple wrapper script that calls the appropriate OS-specific deployment script.
+Usage: python deploy dev|staging|prod
+"""
+
+import sys
+import os
+import subprocess
+import platform
+from pathlib import Path
+
+def print_colored(message: str, color: str = "\033[0m"):
+    """Print a colored message"""
+    reset = "\033[0m"
+    print(f"{color}{message}{reset}")
+
+def get_os_script():
+    """Get the appropriate deployment script for the current OS"""
+    system = platform.system().lower()
+    
+    if system == "windows":
+        return "scripts/deploy.ps1"
+    elif system in ["linux", "darwin"]:  # Linux or macOS
+        return "scripts/deploy.sh"
+    else:
+        print_colored("Unsupported operating system", "\033[31m")
+        sys.exit(1)
+
+def validate_environment(environment: str):
+    """Validate the environment parameter"""
+    valid_environments = ["dev", "staging", "prod"]
+    if environment not in valid_environments:
+        print_colored(f"Invalid environment: {environment}", "\033[31m")
+        print_colored(f"Valid environments: {', '.join(valid_environments)}", "\033[33m")
+        sys.exit(1)
+
+def main():
+    # Check if environment parameter is provided
+    if len(sys.argv) != 2:
+        print_colored("Environment parameter required", "\033[31m")
+        print_colored("Usage: python deploy dev|staging|prod", "\033[33m")
+        sys.exit(1)
+    
+    environment = sys.argv[1].lower()
+    validate_environment(environment)
+    
+    # Get the appropriate script for the current OS
+    script_path = get_os_script()
+    
+    # Check if script exists
+    if not os.path.exists(script_path):
+        print_colored(f"Deployment script not found: {script_path}", "\033[31m")
+        sys.exit(1)
+    
+    # Determine the command to run based on OS
+    system = platform.system().lower()
+    
+    if system == "windows":
+        # On Windows, run PowerShell script
+        cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path, "-Environment", environment]
+    else:
+        # On Linux/macOS, run bash script
+        cmd = ["bash", script_path, environment]
+    
+    # Run the deployment script
+    try:
+        print_colored(f"Starting {environment} deployment...", "\033[36m")
+        result = subprocess.run(cmd, check=True)
+        print_colored(f"{environment} deployment completed successfully!", "\033[32m")
+    except subprocess.CalledProcessError as e:
+        print_colored(f"Deployment failed with exit code {e.returncode}", "\033[31m")
+        sys.exit(e.returncode)
+    except FileNotFoundError:
+        print_colored("Required command not found. Please ensure PowerShell (Windows) or bash (Linux/macOS) is installed.", "\033[31m")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main() 
