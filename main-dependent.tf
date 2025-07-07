@@ -1,24 +1,6 @@
 # Phase 2 Configuration - Dependent Resources
 # This file contains resources that depend on Phase 1 resources
-
-# Load environment configuration
-locals {
-  # Get environment from variable or default to dev
-  environment = var.environment != null ? var.environment : "dev"
-
-  # Load environment-specific configuration
-  env_config_file = file("${path.module}/environments/${local.environment}.json")
-  env_config      = jsondecode(local.env_config_file)
-
-  # Common tags for all resources
-  common_tags = {
-    Environment = local.environment
-    Project     = local.env_config.project_id
-    ManagedBy   = "terraform"
-    Owner       = "infrastructure-team"
-    CostCenter  = "engineering"
-  }
-}
+# Shared configuration is loaded from shared-config.tf
 
 # =============================================================================
 # MODULE: Firestore (Database)

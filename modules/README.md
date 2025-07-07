@@ -35,86 +35,198 @@ modules/
 
 ### 1. Environment Configuration
 
-Create environment-specific JSON files in `environments/`:
+Environment-specific JSON files are located in `environments/`:
 
 ```json
 {
   "environment": "dev",
-  "project_id": "your-project-id",
+  "project_id": "acs-dev-464702",
+  "project_name": "acs-dev",
   "region": "us-central1",
+  "zone": "us-central1-c",
+  "bucket_name": "tf-state-dev-2",
+  "subnet_cidr": "10.0.1.0/24",
+  "machine_type": "e2-micro",
+  "disk_size": 20,
   
   "firestore": {
-    "database_id": "<name>",
-    "collections": {
-      "users": {
-        "name": "users",
-        "fields": {
-          "email": { "type": "string" },
-          "name": { "type": "string" }
-        }
-      }
-    }
+    "database_id": "db-dev",
+    "location_id": "us-central1",
+    "database_type": "FIRESTORE_NATIVE"
   },
   
   "cloud_functions": {
-    "functions": {
-      "email_processor": {
-        "name": "email-processor",
-        "runtime": "nodejs18",
-        "entry_point": "processEmail",
-        "source_dir": "../functions/email-processor",
-        "trigger_type": "pubsub"
-      }
-    }
+    "region": "us-central1",
+    "functions": {}
+  },
+  
+  "api_gateway": {
+    "region": "us-central1",
+    "api_config": {}
+  },
+  
+  "cloud_storage": {
+    "region": "us-central1",
+    "buckets": {}
+  },
+  
+  "pub_sub": {
+    "region": "us-central1",
+    "topics": {},
+    "subscriptions": {}
+  },
+  
+  "identity_platform": {
+    "region": "us-central1",
+    "identity_platform_config": {}
+  },
+  
+  "cloud_kms": {
+    "region": "us-central1",
+    "keyrings": {}
+  },
+  
+  "monitoring": {
+    "region": "us-central1",
+    "monitoring_config": {}
   }
 }
 ```
 
 ### 2. Main Configuration
 
-Use the modular main configuration (`main-modular.tf`):
+The modules are used in the main configuration files:
 
+**Phase 1** (`main-independent.tf`): Independent resources
 ```hcl
 # Load environment configuration
 locals {
   environment = var.environment != null ? var.environment : "dev"
   env_config_file = file("${path.module}/environments/${local.environment}.json")
-  env_config = jsondecode(local.env_config_file)
+  env_config      = jsondecode(local.env_config_file)
+}
+
+# Firestore database creation (independent resource)
+resource "google_firestore_database" "database" {
+  name        = "db-dev"
+  location_id = local.env_config.region
+  type        = "FIRESTORE_NATIVE"
+}
+```
+
+**Phase 2** (`main-dependent.tf`): Dependent resources using modules
+```hcl
+# Load environment configuration
+locals {
+  environment = var.environment != null ? var.environment : "dev"
+  env_config_file = file("${path.module}/environments/${local.environment}.json")
+  env_config      = jsondecode(local.env_config_file)
 }
 
 # Use modules
 module "firestore" {
   source = "./modules/firestore"
-  
-  project_id   = local.env_config.project_id
-  environment  = local.environment
-  database_id  = local.env_config.firestore.database_id
-  collections  = local.env_config.firestore.collections
+
+  project_id    = local.env_config.project_id
+  environment   = local.environment
+  location_id   = local.env_config.region
+  database_name = "db-dev"
 }
 
 module "cloud_functions" {
   source = "./modules/cloud-functions"
-  
+
   project_id  = local.env_config.project_id
   environment = local.environment
-  functions   = local.env_config.cloud_functions.functions
+  region      = local.env_config.region
+  functions   = {}
+}
+
+module "api_gateway" {
+  source = "./modules/api-gateway"
+
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.region
+  api_config  = {}
+}
+
+module "cloud_storage" {
+  source = "./modules/cloud-storage"
+
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.region
+  buckets     = {}
+}
+
+module "pub_sub" {
+  source = "./modules/pub-sub"
+
+  project_id    = local.env_config.project_id
+  environment   = local.environment
+  region        = local.env_config.region
+  topics        = {}
+  subscriptions = {}
+}
+
+module "identity_platform" {
+  source = "./modules/identity-platform"
+
+  project_id               = local.env_config.project_id
+  environment              = local.environment
+  region                   = local.env_config.region
+  identity_platform_config = {}
+}
+
+module "cloud_kms" {
+  source = "./modules/cloud-kms"
+
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.region
+  keyrings    = {}
+}
+
+module "monitoring" {
+  source = "./modules/monitoring"
+
+  project_id        = local.env_config.project_id
+  environment       = local.environment
+  region            = local.env_config.region
+  monitoring_config = {}
 }
 ```
 
 ### 3. Deployment
 
+Use the provided deployment scripts:
+
 ```bash
 # Deploy to dev environment
-terraform plan -var="environment=dev"
-terraform apply -var="environment=dev"
+python scripts/run deploy dev
 
 # Deploy to staging environment
-terraform plan -var="environment=staging"
-terraform apply -var="environment=staging"
+python scripts/run deploy staging
 
 # Deploy to production environment
-terraform plan -var="environment=prod"
-terraform apply -var="environment=prod"
+python scripts/run deploy prod
+```
+
+Or use Terraform directly:
+
+```bash
+# Set environment variable
+export TF_VAR_environment="dev"
+
+# Initialize Terraform
+terraform init
+
+# Plan deployment
+terraform plan -var="environment=dev"
+
+# Apply changes
+terraform apply -var="environment=dev"
 ```
 
 ## Module Details
@@ -132,19 +244,22 @@ terraform apply -var="environment=prod"
 ```json
 {
   "firestore": {
-    "database_id": "<name>",
+    "database_id": "db-dev",
     "location_id": "us-central1",
-    "database_type": "FIRESTORE_NATIVE",
-    "collections": {
-      "users": {
-        "name": "users",
-        "fields": {
-          "email": { "type": "string" },
-          "created_at": { "type": "timestamp" }
-        }
-      }
-    }
+    "database_type": "FIRESTORE_NATIVE"
   }
+}
+```
+
+**Module Usage**:
+```hcl
+module "firestore" {
+  source = "./modules/firestore"
+
+  project_id    = local.env_config.project_id
+  environment   = local.environment
+  location_id   = local.env_config.region
+  database_name = "db-dev"
 }
 ```
 
@@ -162,6 +277,7 @@ terraform apply -var="environment=prod"
 ```json
 {
   "cloud_functions": {
+    "region": "us-central1",
     "functions": {
       "email_processor": {
         "name": "email-processor",
@@ -174,6 +290,18 @@ terraform apply -var="environment=prod"
       }
     }
   }
+}
+```
+
+**Module Usage**:
+```hcl
+module "cloud_functions" {
+  source = "./modules/cloud-functions"
+
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.region
+  functions   = local.env_config.cloud_functions.functions
 }
 ```
 
@@ -191,6 +319,7 @@ terraform apply -var="environment=prod"
 ```json
 {
   "api_gateway": {
+    "region": "us-central1",
     "api_config": {
       "api_id": "company-api",
       "display_name": "Company API",
@@ -199,12 +328,23 @@ terraform apply -var="environment=prod"
           "name": "Get Users",
           "path": "/users",
           "method": "GET",
-          "function_name": "user-api",
-          "auth_required": true
+          "function": "get-users-function"
         }
       }
     }
   }
+}
+```
+
+**Module Usage**:
+```hcl
+module "api_gateway" {
+  source = "./modules/api-gateway"
+
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.region
+  api_config  = local.env_config.api_gateway.api_config
 }
 ```
 
@@ -213,29 +353,45 @@ terraform apply -var="environment=prod"
 **Purpose**: Object storage (S3 equivalent)
 
 **Key Features**:
-- Multiple bucket creation
-- Lifecycle policies
+- Bucket creation with lifecycle policies
 - CORS configuration
+- IAM bindings and access control
 - Versioning support
 
 **Configuration**:
 ```json
 {
   "cloud_storage": {
+    "region": "us-central1",
     "buckets": {
-      "email_attachments": {
-        "name": "email-attachments",
-        "location": "US",
+      "app-storage": {
+        "name": "app-storage-bucket",
+        "location": "us-central1",
+        "storage_class": "STANDARD",
         "versioning": true,
         "lifecycle_rules": [
           {
-            "action": { "type": "Delete" },
-            "condition": { "age": 365 }
+            "action": "Delete",
+            "condition": {
+              "age": 365
+            }
           }
         ]
       }
     }
   }
+}
+```
+
+**Module Usage**:
+```hcl
+module "cloud_storage" {
+  source = "./modules/cloud-storage"
+
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.region
+  buckets     = local.env_config.cloud_storage.buckets
 }
 ```
 
@@ -246,62 +402,82 @@ terraform apply -var="environment=prod"
 **Key Features**:
 - Topic and subscription management
 - Dead letter queues
-- Retry policies
-- Push subscriptions
+- Push and pull subscriptions
+- IAM access control
 
 **Configuration**:
 ```json
 {
   "pub_sub": {
+    "region": "us-central1",
     "topics": {
-      "email_queue": {
-        "name": "email-queue",
+      "email-notifications": {
+        "name": "email-notifications",
         "message_retention_duration": "604800s"
       }
     },
     "subscriptions": {
-      "email_processor_sub": {
+      "email-processor": {
         "name": "email-processor-sub",
-        "topic": "email_queue",
-        "ack_deadline_seconds": 60
+        "topic": "email-notifications",
+        "ack_deadline_seconds": 20
       }
     }
   }
 }
 ```
 
+**Module Usage**:
+```hcl
+module "pub_sub" {
+  source = "./modules/pub-sub"
+
+  project_id    = local.env_config.project_id
+  environment   = local.environment
+  region        = local.env_config.region
+  topics        = local.env_config.pub_sub.topics
+  subscriptions = local.env_config.pub_sub.subscriptions
+}
+```
+
 ### Identity Platform Module
 
-**Purpose**: Authentication (Cognito equivalent)
+**Purpose**: User authentication (Cognito equivalent)
 
 **Key Features**:
-- Multiple sign-in providers (Google, Facebook, Email)
-- Password policies
-- Email verification
-- Multi-tenancy support
+- Multi-provider authentication
+- User management
+- Social login integration
+- Custom claims and security policies
 
 **Configuration**:
 ```json
 {
   "identity_platform": {
+    "region": "us-central1",
     "identity_platform_config": {
-      "display_name": "Company Auth",
-      "sign_in_options": [
-        {
-          "provider": "email",
-          "enabled": true
-        },
-        {
-          "provider": "google",
-          "enabled": true,
-          "provider_config": {
-            "client_id": "your-client-id",
-            "client_secret": "your-client-secret"
-          }
-        }
-      ]
+      "display_name": "Company Identity Platform",
+      "enabled_sign_in_methods": ["EMAIL_PASSWORD", "GOOGLE"],
+      "password_policy": {
+        "min_length": 8,
+        "require_uppercase": true,
+        "require_lowercase": true,
+        "require_numbers": true
+      }
     }
   }
+}
+```
+
+**Module Usage**:
+```hcl
+module "identity_platform" {
+  source = "./modules/identity-platform"
+
+  project_id               = local.env_config.project_id
+  environment              = local.environment
+  region                   = local.env_config.region
+  identity_platform_config = local.env_config.identity_platform.identity_platform_config
 }
 ```
 
@@ -310,22 +486,25 @@ terraform apply -var="environment=prod"
 **Purpose**: Encryption key management (KMS equivalent)
 
 **Key Features**:
-- Keyring and crypto key creation
+- Keyring and key creation
 - Key rotation policies
-- Different key purposes (encrypt/decrypt, sign/verify)
+- Protection levels (software/hardware)
+- IAM bindings for key access
 
 **Configuration**:
 ```json
 {
   "cloud_kms": {
+    "region": "us-central1",
     "keyrings": {
-      "app_keys": {
-        "name": "app-keys",
+      "app-keys": {
+        "name": "app-encryption-keys",
+        "location": "us-central1",
         "keys": {
-          "data_encryption": {
-            "name": "data-encryption",
+          "data-encryption": {
+            "name": "data-encryption-key",
             "purpose": "ENCRYPT_DECRYPT",
-            "rotation_period": "7776000s"
+            "protection_level": "SOFTWARE"
           }
         }
       }
@@ -334,36 +513,46 @@ terraform apply -var="environment=prod"
 }
 ```
 
+**Module Usage**:
+```hcl
+module "cloud_kms" {
+  source = "./modules/cloud-kms"
+
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.region
+  keyrings    = local.env_config.cloud_kms.keyrings
+}
+```
+
 ### Monitoring Module
 
-**Purpose**: Observability (CloudWatch equivalent)
+**Purpose**: Logging and monitoring (CloudWatch equivalent)
 
 **Key Features**:
-- Log sinks for centralized logging
-- Uptime checks
-- Alerting policies
+- Centralized logging with log sinks
+- Uptime monitoring and alerting
+- Performance metrics collection
 - Notification channels
 
 **Configuration**:
 ```json
 {
   "monitoring": {
+    "region": "us-central1",
     "monitoring_config": {
-      "log_sinks": {
-        "audit_logs": {
-          "name": "audit-logs",
-          "destination": "storage.googleapis.com/audit-logs-bucket",
-          "filter": "resource.type=\"cloud_function\""
+      "uptime_checks": {
+        "api-health": {
+          "name": "API Health Check",
+          "uri": "https://api.example.com/health",
+          "check_interval": "60s"
         }
       },
-      "uptime_checks": {
-        "api_health": {
-          "display_name": "API Health Check",
-          "http_check": {
-            "path": "/health",
-            "port": 443,
-            "use_ssl": true
-          }
+      "alert_policies": {
+        "error-rate": {
+          "name": "High Error Rate",
+          "condition": "error_rate > 0.05",
+          "notification_channels": ["email-alerts"]
         }
       }
     }
@@ -371,90 +560,91 @@ terraform apply -var="environment=prod"
 }
 ```
 
+**Module Usage**:
+```hcl
+module "monitoring" {
+  source = "./modules/monitoring"
+
+  project_id        = local.env_config.project_id
+  environment       = local.environment
+  region            = local.env_config.region
+  monitoring_config = local.env_config.monitoring.monitoring_config
+}
+```
+
+## Environment-Specific Configurations
+
+### Development Environment
+- **Project**: `acs-dev-464702`
+- **Machine Type**: `e2-micro`
+- **Disk Size**: 20GB
+- **Features**: Basic monitoring, open access
+
+### Staging Environment
+- **Project**: `acs-staging-464702`
+- **Machine Type**: `e2-small`
+- **Disk Size**: 50GB
+- **Features**: Production-like configuration
+
+### Production Environment
+- **Project**: `acs-prod-464702`
+- **Machine Type**: `e2-standard-2`
+- **Disk Size**: 100GB
+- **Features**: Full monitoring, restricted access
+
 ## Best Practices
 
-### 1. Environment Separation
-- Use separate JSON files for each environment
-- Keep sensitive data in environment variables or Secret Manager
-- Use different project IDs for each environment
+### Module Design
+1. **Single Responsibility**: Each module handles one service type
+2. **Reusability**: Modules can be used across environments
+3. **Configuration**: Use variables for environment-specific settings
+4. **Documentation**: Include clear documentation for each module
 
-### 2. Security
-- Enable uniform bucket-level access for Cloud Storage
-- Use least-privilege IAM roles
-- Enable Cloud KMS for encryption
-- Restrict SSH access in production
+### Security
+1. **Least Privilege**: Use minimal required permissions
+2. **Environment Isolation**: Separate configurations per environment
+3. **Encryption**: Enable encryption for all sensitive data
+4. **Access Control**: Implement proper IAM policies
 
-### 3. Monitoring
-- Set up log sinks for centralized logging
-- Create uptime checks for critical services
-- Configure alerting policies for errors and performance issues
-
-### 4. Cost Optimization
-- Use appropriate machine types and storage classes
-- Set up lifecycle policies for data retention
-- Monitor resource usage and costs
-
-## Migration from AWS
-
-### Service Mapping
-
-| AWS Service | GCP Equivalent | Module |
-|-------------|----------------|--------|
-| Lambda | Cloud Functions | `cloud-functions/` |
-| DynamoDB | Firestore | `firestore/` |
-| API Gateway | API Gateway | `api-gateway/` |
-| S3 | Cloud Storage | `cloud-storage/` |
-| SQS | Pub/Sub | `pub-sub/` |
-| Cognito | Identity Platform | `identity-platform/` |
-| KMS | Cloud KMS | `cloud-kms/` |
-| CloudWatch | Monitoring | `monitoring/` |
-
-### Migration Steps
-
-1. **Inventory AWS Resources**: Document all existing resources
-2. **Create GCP Project**: Set up project with appropriate IAM
-3. **Configure Environment Files**: Create JSON configs for each environment
-4. **Deploy Modules**: Start with core services (Firestore, Cloud Functions)
-5. **Test Integration**: Verify services work together
-6. **Migrate Data**: Transfer data from AWS to GCP
-7. **Update Applications**: Modify code to use GCP services
-8. **Cutover**: Switch traffic from AWS to GCP
+### Deployment
+1. **Phase 1 First**: Deploy independent resources before dependent ones
+2. **Environment Testing**: Test in dev before staging/prod
+3. **Validation**: Always validate configurations before deployment
+4. **Rollback**: Have rollback procedures ready
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Permission Errors**: Ensure service accounts have appropriate roles
-2. **Resource Naming**: GCP has stricter naming requirements than AWS
-3. **Region Availability**: Some services may not be available in all regions
-4. **API Enablement**: Enable required APIs in your GCP project
+1. **Module Not Found**
+   ```bash
+   # Ensure module path is correct
+   ls modules/firestore/main.tf
+   ```
 
-### Useful Commands
+2. **Configuration Errors**
+   ```bash
+   # Validate configuration
+   python scripts/run validate dev
+   ```
 
-```bash
-# Validate configuration
-terraform validate
+3. **Permission Errors**
+   ```bash
+   # Check GCP project and authentication
+   gcloud config get-value project
+   gcloud auth list
+   ```
 
-# Format code
-terraform fmt
+4. **State Conflicts**
+   ```bash
+   # Check state and resolve conflicts
+   terraform state list
+   terraform state show <resource>
+   ```
 
-# Plan changes
-terraform plan -var="environment=dev"
+## Contributing
 
-# Apply changes
-terraform apply -var="environment=dev"
-
-# Destroy resources (be careful!)
-terraform destroy -var="environment=dev"
-```
-
-## Next Steps
-
-1. Review and customize the environment configurations
-2. Set up your GCP project and enable required APIs
-3. Create service account keys for authentication
-4. Deploy the infrastructure incrementally
-5. Test each module individually
-6. Integrate with your application code
-7. Set up monitoring and alerting
-8. Plan the production migration 
+1. **Follow Module Structure**: Use the established module pattern
+2. **Update Documentation**: Keep module documentation current
+3. **Test Thoroughly**: Test modules in development first
+4. **Version Control**: Commit changes with clear messages 

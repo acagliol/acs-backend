@@ -7,8 +7,8 @@ This document provides detailed descriptions of all backend resources in the Ter
 ## Project Architecture
 
 ### 2-Step Deployment Structure
-- **Phase 1** (`main-independent.tf`): Independent resources (APIs, service accounts, IAM)
-- **Phase 2** (`main-dependent.tf`): Dependent resources (Firestore, modules, indexes)
+- **Phase 1** (`main-independent.tf`): Independent resources (Firestore database, basic infrastructure)
+- **Phase 2** (`main-dependent.tf`): Dependent resources (modules, advanced configurations)
 - **Root Files**: `versions.tf`, `providers.tf`, `variables.tf`, `backend.tf` in project root
 
 ### Environment Configuration
@@ -18,101 +18,29 @@ This document provides detailed descriptions of all backend resources in the Ter
 
 ## Phase 1 Resources (Independent)
 
-### Google Cloud APIs
-
-#### Resource: `google_project_service`
-**File**: `main-independent.tf` (Phase 1)
-**Purpose**: Enable required Google Cloud APIs for the project
-
-**Configuration**:
-```hcl
-resource "google_project_service" "required_apis" {
-  for_each = toset([
-    "firestore.googleapis.com",
-    "cloudfunctions.googleapis.com",
-    "cloudbuild.googleapis.com",
-    "run.googleapis.com",
-    "storage.googleapis.com",
-    "pubsub.googleapis.com",
-    "identitytoolkit.googleapis.com",
-    "cloudkms.googleapis.com",
-    "monitoring.googleapis.com",
-    "logging.googleapis.com"
-  ])
-
-  project = local.env_config.project_id
-  service = each.value
-  disable_dependent_services = false
-  disable_on_destroy         = false
-}
-```
-
-**Features**:
-- Enables all required APIs for the infrastructure
-- Prevents accidental API disabling
-- Ensures APIs are available for Phase 2 resources
-
-### Terraform Service Account
-
-#### Resource: `google_service_account` and `google_project_iam_member`
-**File**: `main-independent.tf` (Phase 1)
-**Purpose**: Service account for Terraform operations with appropriate permissions
-
-**Configuration**:
-```hcl
-resource "google_service_account" "terraform_sa" {
-  account_id   = "terraform-sa-${local.environment}"
-  display_name = "Terraform Service Account for ${local.environment}"
-  project      = local.env_config.project_id
-}
-
-resource "google_project_iam_member" "terraform_roles" {
-  for_each = toset([
-    "roles/firestore.admin",
-    "roles/cloudfunctions.developer",
-    "roles/storage.admin",
-    "roles/pubsub.admin",
-    "roles/iam.serviceAccountAdmin",
-    "roles/cloudkms.admin",
-    "roles/monitoring.admin",
-    "roles/logging.admin"
-  ])
-
-  project = local.env_config.project_id
-  role    = each.value
-  member  = "serviceAccount:${google_service_account.terraform_sa.email}"
-}
-```
-
-**Features**:
-- Dedicated service account for Terraform operations
-- Principle of least privilege with specific roles
-- Environment-specific naming
-
-## Phase 2 Resources (Dependent)
-
 ### Firestore Database
 
 #### Resource: `google_firestore_database`
-**File**: `main-dependent.tf` (Phase 2) via firestore module
+**File**: `main-independent.tf` (Phase 1)
 **Purpose**: NoSQL document database for application data storage
 
 **Configuration**:
 ```hcl
-module "firestore" {
-  source = "./modules/firestore"
-  project_id    = local.env_config.project_id
-  environment   = local.environment
-  location_id   = local.env_config.region
-  database_name = "db-dev"
+resource "google_firestore_database" "database" {
+  name        = "db-dev"
+  location_id = local.env_config.region
+  type        = "FIRESTORE_NATIVE"
 }
 ```
 
 **Environment Configuration**:
 ```json
 {
+  "environment": "dev",
+  "project_id": "acs-dev-464702",
+  "region": "us-central1",
   "firestore": {
-    "database_id": "dev-database",
+    "database_id": "db-dev",
     "location_id": "us-central1",
     "database_type": "FIRESTORE_NATIVE"
   }
@@ -132,236 +60,93 @@ module "firestore" {
 - Real-time collaboration
 - Mobile app backend
 
-### Cloud Storage
+### Environment Configuration Loading
 
-#### Resource: `google_storage_bucket`
-**File**: `main-dependent.tf` (Phase 2)
-**Purpose**: Object storage for files, images, and static assets
+#### Locals Block
+**File**: `main-independent.tf` (Phase 1)
+**Purpose**: Dynamic environment configuration loading
 
 **Configuration**:
 ```hcl
-module "cloud_storage" {
-  source = "./modules/cloud-storage"
-  project_id  = local.env_config.project_id
-  environment = local.environment
-  region      = local.env_config.cloud_storage.region
-  buckets     = local.env_config.cloud_storage.buckets
-}
-```
+locals {
+  # Get environment from variable or default to dev
+  environment = var.environment != null ? var.environment : "dev"
 
-**Environment Configuration**:
-```json
-{
-  "cloud_storage": {
-    "region": "us-central1",
-    "buckets": [
-      {
-        "name": "dev-storage-bucket",
-        "location": "us-central1",
-        "storage_class": "STANDARD"
-      }
-    ]
+  # Load environment-specific configuration
+  env_config_file = file("${path.module}/environments/${local.environment}.json")
+  env_config      = jsondecode(local.env_config_file)
+
+  # Common tags for all resources
+  common_tags = {
+    Environment = local.environment
+    Project     = local.env_config.project_id
+    ManagedBy   = "terraform"
+    Owner       = "infrastructure-team"
+    CostCenter  = "engineering"
   }
 }
 ```
 
 **Features**:
-- Object storage with global edge locations
-- Multiple storage classes
-- Lifecycle management
-- Access control
-- Versioning support
+- Dynamic environment selection
+- JSON configuration loading
+- Consistent resource tagging
+- Environment-specific settings
 
-**Use Cases**:
-- Static website hosting
-- File uploads and downloads
-- Backup storage
-- Media file storage
+## Phase 2 Resources (Dependent)
 
-### Pub/Sub Messaging
+### Firestore Module
 
-#### Resource: `google_pubsub_topic` and `google_pubsub_subscription`
+#### Module: `firestore`
 **File**: `main-dependent.tf` (Phase 2)
-**Purpose**: Asynchronous messaging and event-driven architecture
+**Source**: `./modules/firestore`
+**Purpose**: Advanced Firestore configuration and management
 
 **Configuration**:
 ```hcl
-module "pub_sub" {
-  source = "./modules/pub-sub"
+module "firestore" {
+  source = "./modules/firestore"
+
   project_id    = local.env_config.project_id
   environment   = local.environment
-  region        = local.env_config.pub_sub.region
-  topics        = local.env_config.pub_sub.topics
-  subscriptions = local.env_config.pub_sub.subscriptions
+  location_id   = local.env_config.region
+  database_name = "db-dev"
 }
 ```
 
 **Environment Configuration**:
 ```json
 {
-  "pub_sub": {
-    "region": "us-central1",
-    "topics": [
-      {
-        "name": "dev-notifications",
-        "message_retention_duration": "604800s"
-      }
-    ],
-    "subscriptions": [
-      {
-        "name": "dev-notifications-sub",
-        "topic": "dev-notifications",
-        "ack_deadline_seconds": 20
-      }
-    ]
+  "firestore": {
+    "database_id": "db-dev",
+    "location_id": "us-central1",
+    "database_type": "FIRESTORE_NATIVE"
   }
 }
 ```
 
 **Features**:
-- Asynchronous messaging
-- Guaranteed delivery
-- Automatic scaling
-- Message ordering
-- Dead letter queues
+- Advanced database configuration
+- Collection and index management
+- Security rules configuration
+- Backup and restore capabilities
 
-**Use Cases**:
-- Event-driven architecture
-- Microservices communication
-- Background job processing
-- Real-time notifications
+### Cloud Functions Module
 
-## Networking Resources
-
-### VPC Network
-
-#### Resource: `google_compute_network`
-**File**: `main-independent.tf` (Phase 1)
-**Purpose**: Virtual private cloud for network isolation
-
-**Configuration**:
-```hcl
-resource "google_compute_network" "vpc" {
-  name                    = "vpc-${local.environment}"
-  auto_create_subnetworks = false
-  routing_mode            = "REGIONAL"
-  project                 = local.env_config.project_id
-}
-```
-
-**Features**:
-- Network isolation
-- Custom routing
-- Subnet management
-- Firewall rules
-- Load balancing
-
-**Use Cases**:
-- Application network isolation
-- Multi-tier architecture
-- Security segmentation
-- Hybrid cloud connectivity
-
-### Subnet
-
-#### Resource: `google_compute_subnetwork`
-**File**: `main-independent.tf` (Phase 1)
-**Purpose**: IP address range within VPC
-
-**Configuration**:
-```hcl
-resource "google_compute_subnetwork" "subnet" {
-  name          = "subnet-${local.environment}"
-  ip_cidr_range = "10.0.1.0/24"
-  network       = google_compute_network.vpc.id
-  region        = local.env_config.region
-  project       = local.env_config.project_id
-}
-```
-
-**Features**:
-- IP address management
-- Regional deployment
-- Private Google access
-- Flow logs
-
-**Use Cases**:
-- Resource placement
-- Network segmentation
-- IP address planning
-- Regional deployments
-
-### Firewall Rules
-
-#### Resource: `google_compute_firewall`
-**File**: `main-independent.tf` (Phase 1)
-**Purpose**: Network security and access control
-
-**Web Access Rule**:
-```hcl
-resource "google_compute_firewall" "allow_web" {
-  name    = "allow-web-${local.environment}"
-  network = google_compute_network.vpc.name
-  project = local.env_config.project_id
-  
-  allow {
-    protocol = "tcp"
-    ports    = ["80", "443"]
-  }
-  
-  source_ranges = local.environment == "prod" ? [] : ["0.0.0.0/0"]
-  target_tags   = ["web"]
-  description = "Allow HTTP/HTTPS traffic - restricted in production"
-}
-```
-
-**SSH Access Rule**:
-```hcl
-resource "google_compute_firewall" "allow_ssh" {
-  name    = "allow-ssh-${local.environment}"
-  network = google_compute_network.vpc.name
-  project = local.env_config.project_id
-  
-  allow {
-    protocol = "tcp"
-    ports    = ["22"]
-  }
-  
-  source_ranges = local.environment == "prod" ? var.allowed_ssh_ips : ["0.0.0.0/0"]
-  target_tags   = ["ssh"]
-  description = "Allow SSH access - restricted to specific IPs in production"
-}
-```
-
-**Features**:
-- Port-based filtering
-- Source IP restrictions
-- Target tag filtering
-- Environment-specific rules
-- Security logging
-
-**Use Cases**:
-- Application security
-- Administrative access
-- Network segmentation
-- Compliance requirements
-
-## Module-Based Resources (Phase 2)
-
-### Cloud Functions
-
-#### Module: `cloud-functions`
+#### Module: `cloud_functions`
 **File**: `main-dependent.tf` (Phase 2)
-**Purpose**: Serverless function execution
+**Source**: `./modules/cloud-functions`
+**Purpose**: Serverless function deployment and management
 
 **Configuration**:
 ```hcl
 module "cloud_functions" {
   source = "./modules/cloud-functions"
+
   project_id  = local.env_config.project_id
   environment = local.environment
-  region      = local.env_config.cloud_functions.region
-  functions   = local.env_config.cloud_functions.functions
+  region      = local.env_config.region
+  functions   = {}
 }
 ```
 
@@ -370,46 +155,34 @@ module "cloud_functions" {
 {
   "cloud_functions": {
     "region": "us-central1",
-    "functions": [
-      {
-        "name": "dev-api-handler",
-        "runtime": "nodejs18",
-        "entry_point": "handler",
-        "source_dir": "functions/api-handler",
-        "trigger_http": true
-      }
-    ]
+    "functions": {}
   }
 }
 ```
 
 **Features**:
-- Serverless execution
-- Automatic scaling
-- Multiple runtimes
-- HTTP triggers
-- Event-driven
+- Serverless function deployment
+- Multiple runtime support
+- HTTP and Pub/Sub triggers
+- Environment variable management
+- Memory and timeout configuration
 
-**Use Cases**:
-- API endpoints
-- Data processing
-- Event handlers
-- Microservices
+### API Gateway Module
 
-### API Gateway
-
-#### Module: `api-gateway`
+#### Module: `api_gateway`
 **File**: `main-dependent.tf` (Phase 2)
+**Source**: `./modules/api-gateway`
 **Purpose**: HTTP API management and routing
 
 **Configuration**:
 ```hcl
 module "api_gateway" {
   source = "./modules/api-gateway"
+
   project_id  = local.env_config.project_id
   environment = local.environment
-  region      = local.env_config.api_gateway.region
-  api_config  = local.env_config.api_gateway.api_config
+  region      = local.env_config.region
+  api_config  = {}
 }
 ```
 
@@ -418,42 +191,108 @@ module "api_gateway" {
 {
   "api_gateway": {
     "region": "us-central1",
-    "api_config": {
-      "api_id": "dev-api",
-      "display_name": "Development API",
-      "openapi_doc": "api-spec.yaml"
-    }
+    "api_config": {}
   }
 }
 ```
 
 **Features**:
 - HTTP API management
-- OpenAPI specification
-- Authentication
-- Rate limiting
-- Monitoring
+- OpenAPI specification support
+- Endpoint routing to Cloud Functions
+- CORS configuration
+- Authentication integration
 
-**Use Cases**:
-- REST API hosting
-- API versioning
-- Client SDK generation
-- API documentation
+### Cloud Storage Module
 
-### Identity Platform
-
-#### Module: `identity-platform`
+#### Module: `cloud_storage`
 **File**: `main-dependent.tf` (Phase 2)
+**Source**: `./modules/cloud-storage`
+**Purpose**: Object storage bucket management
+
+**Configuration**:
+```hcl
+module "cloud_storage" {
+  source = "./modules/cloud-storage"
+
+  project_id  = local.env_config.project_id
+  environment = local.environment
+  region      = local.env_config.region
+  buckets     = {}
+}
+```
+
+**Environment Configuration**:
+```json
+{
+  "cloud_storage": {
+    "region": "us-central1",
+    "buckets": {}
+  }
+}
+```
+
+**Features**:
+- Object storage buckets
+- Lifecycle management
+- CORS configuration
+- IAM bindings
+- Versioning support
+
+### Pub/Sub Module
+
+#### Module: `pub_sub`
+**File**: `main-dependent.tf` (Phase 2)
+**Source**: `./modules/pub-sub`
+**Purpose**: Message queuing and event-driven architecture
+
+**Configuration**:
+```hcl
+module "pub_sub" {
+  source = "./modules/pub-sub"
+
+  project_id    = local.env_config.project_id
+  environment   = local.environment
+  region        = local.env_config.region
+  topics        = {}
+  subscriptions = {}
+}
+```
+
+**Environment Configuration**:
+```json
+{
+  "pub_sub": {
+    "region": "us-central1",
+    "topics": {},
+    "subscriptions": {}
+  }
+}
+```
+
+**Features**:
+- Asynchronous messaging
+- Topic and subscription management
+- Dead letter queues
+- Push and pull subscriptions
+- IAM access control
+
+### Identity Platform Module
+
+#### Module: `identity_platform`
+**File**: `main-dependent.tf` (Phase 2)
+**Source**: `./modules/identity-platform`
 **Purpose**: User authentication and authorization
 
 **Configuration**:
 ```hcl
 module "identity_platform" {
   source = "./modules/identity-platform"
+
   project_id               = local.env_config.project_id
   environment              = local.environment
-  region                   = local.env_config.identity_platform.region
-  identity_platform_config = local.env_config.identity_platform.identity_platform_config
+  region                   = local.env_config.region
+  identity_platform_config = {}
 }
 ```
 
@@ -462,41 +301,34 @@ module "identity_platform" {
 {
   "identity_platform": {
     "region": "us-central1",
-    "identity_platform_config": {
-      "display_name": "Development Identity Platform",
-      "enabled_sign_in_methods": ["EMAIL_PASSWORD", "GOOGLE"]
-    }
+    "identity_platform_config": {}
   }
 }
 ```
 
 **Features**:
-- Multi-provider authentication
-- User management
-- Social login
-- Custom claims
-- Security policies
-
-**Use Cases**:
 - User authentication
-- Single sign-on
-- Social login integration
-- User profile management
+- Multiple provider support
+- Password policies
+- Email verification
+- OAuth configuration
 
-### Cloud KMS
+### Cloud KMS Module
 
-#### Module: `cloud-kms`
+#### Module: `cloud_kms`
 **File**: `main-dependent.tf` (Phase 2)
+**Source**: `./modules/cloud-kms`
 **Purpose**: Encryption key management
 
 **Configuration**:
 ```hcl
 module "cloud_kms" {
   source = "./modules/cloud-kms"
+
   project_id  = local.env_config.project_id
   environment = local.environment
-  region      = local.env_config.cloud_kms.region
-  keyrings    = local.env_config.cloud_kms.keyrings
+  region      = local.env_config.region
+  keyrings    = {}
 }
 ```
 
@@ -505,43 +337,34 @@ module "cloud_kms" {
 {
   "cloud_kms": {
     "region": "us-central1",
-    "keyrings": [
-      {
-        "name": "dev-encryption-keys",
-        "location": "us-central1"
-      }
-    ]
+    "keyrings": {}
   }
 }
 ```
 
 **Features**:
 - Encryption key management
-- Hardware security modules
-- Key rotation
+- Key rotation policies
+- Protection levels
+- IAM bindings
 - Audit logging
-- Compliance support
 
-**Use Cases**:
-- Data encryption
-- Secret management
-- Compliance requirements
-- Secure key storage
-
-### Monitoring
+### Monitoring Module
 
 #### Module: `monitoring`
 **File**: `main-dependent.tf` (Phase 2)
-**Purpose**: Infrastructure monitoring and alerting
+**Source**: `./modules/monitoring`
+**Purpose**: Logging and monitoring infrastructure
 
 **Configuration**:
 ```hcl
 module "monitoring" {
   source = "./modules/monitoring"
+
   project_id        = local.env_config.project_id
   environment       = local.environment
-  region            = local.env_config.monitoring.region
-  monitoring_config = local.env_config.monitoring.monitoring_config
+  region            = local.env_config.region
+  monitoring_config = {}
 }
 ```
 
@@ -550,190 +373,352 @@ module "monitoring" {
 {
   "monitoring": {
     "region": "us-central1",
-    "monitoring_config": {
-      "uptime_checks": [
-        {
-          "name": "dev-api-uptime",
-          "uri": "https://api.dev.example.com/health"
-        }
-      ],
-      "alert_policies": [
-        {
-          "name": "dev-error-alerts",
-          "condition": "error_rate > 0.05"
-        }
-      ]
-    }
+    "monitoring_config": {}
   }
 }
 ```
 
 **Features**:
+- Centralized logging
 - Uptime monitoring
-- Performance metrics
 - Alert policies
-- Log analysis
-- Dashboard creation
-
-**Use Cases**:
-- Service monitoring
-- Performance tracking
-- Incident response
-- Capacity planning
-
-## Stack Helper Files
-
-### Variables (`stack/variables.tf`)
-**Purpose**: Centralized variable definitions with validation
-
-**Key Variables**:
-- `environment`: Target environment (dev, staging, prod)
-- `project_id`: Google Cloud Project ID
-- `region`: Google Cloud region
-- `allowed_ssh_ips`: SSH access control
-- `allowed_web_ips`: Web access control
-- `subnet_config`: Subnet configuration
-
-### Outputs (`stack/outputs.tf`)
-**Purpose**: Resource information and status outputs
-
-**Key Outputs**:
-- Firestore database information
-- VPC and subnet details
-- Module outputs
-- Connection information
-- Status indicators
-
-### Providers (`stack/providers.tf`)
-**Purpose**: Google Cloud provider configurations
-
-**Providers**:
-- Google provider for standard resources
-- Google-beta provider for beta features
-- Archive provider for function deployments
-
-### Versions (`stack/versions.tf`)
-**Purpose**: Version constraints for Terraform and providers
-
-**Constraints**:
-- Terraform version requirements
-- Provider version constraints
-- Compatibility specifications
-
-### Backend (`stack/backend.tf`)
-**Purpose**: Remote state storage configuration
-
-**Configuration**:
-- GCS backend for state storage
-- Environment-specific buckets
-- State locking and encryption
+- Notification channels
+- Performance metrics
 
 ## Environment-Specific Configurations
 
-### Development Environment
-- **Project**: `terraform-anay-dev`
-- **Region**: `us-central1`
-- **Features**: Basic monitoring, open access
-- **Resources**: Minimal for cost efficiency
+### Development Environment (`environments/dev.json`)
 
-### Staging Environment
-- **Project**: `terraform-anay-staging`
-- **Region**: `us-central1`
-- **Features**: Production-like configuration
-- **Resources**: Full feature set for testing
+```json
+{
+  "environment": "dev",
+  "project_id": "acs-dev-464702",
+  "project_name": "acs-dev",
+  "region": "us-central1",
+  "zone": "us-central1-c",
+  "bucket_name": "tf-state-dev-2",
+  "subnet_cidr": "10.0.1.0/24",
+  "machine_type": "e2-micro",
+  "disk_size": 20,
+  
+  "firestore": {
+    "database_id": "db-dev",
+    "location_id": "us-central1",
+    "database_type": "FIRESTORE_NATIVE"
+  },
+  
+  "cloud_functions": {
+    "region": "us-central1",
+    "functions": {}
+  },
+  
+  "api_gateway": {
+    "region": "us-central1",
+    "api_config": {}
+  },
+  
+  "cloud_storage": {
+    "region": "us-central1",
+    "buckets": {}
+  },
+  
+  "pub_sub": {
+    "region": "us-central1",
+    "topics": {},
+    "subscriptions": {}
+  },
+  
+  "identity_platform": {
+    "region": "us-central1",
+    "identity_platform_config": {}
+  },
+  
+  "cloud_kms": {
+    "region": "us-central1",
+    "keyrings": {}
+  },
+  
+  "monitoring": {
+    "region": "us-central1",
+    "monitoring_config": {}
+  }
+}
+```
 
-### Production Environment
-- **Project**: `terraform-anay-prod`
-- **Region**: `us-central1`
-- **Features**: Full monitoring, restricted access
-- **Resources**: High availability, security focus
+**Characteristics**:
+- Minimal resource configurations
+- Single instances where applicable
+- Basic monitoring
+- Open access for development
+- Cost-optimized settings
 
-## Resource Dependencies
+### Staging Environment (`environments/staging.json`)
 
-### Phase 1 Dependencies
-- **Firestore Database**: No dependencies
-- **Cloud Storage**: No dependencies
-- **Pub/Sub**: No dependencies
-- **VPC**: No dependencies
-- **Subnet**: Depends on VPC
-- **Firewall**: Depends on VPC
+```json
+{
+  "environment": "staging",
+  "project_id": "acs-staging-464702",
+  "project_name": "acs-staging",
+  "region": "us-central1",
+  "zone": "us-central1-c",
+  "bucket_name": "tf-state-staging-2",
+  "subnet_cidr": "10.0.2.0/24",
+  "machine_type": "e2-small",
+  "disk_size": 50,
+  
+  "firestore": {
+    "database_id": "db-staging",
+    "location_id": "us-central1",
+    "database_type": "FIRESTORE_NATIVE"
+  },
+  
+  "cloud_functions": {
+    "region": "us-central1",
+    "functions": {}
+  },
+  
+  "api_gateway": {
+    "region": "us-central1",
+    "api_config": {}
+  },
+  
+  "cloud_storage": {
+    "region": "us-central1",
+    "buckets": {}
+  },
+  
+  "pub_sub": {
+    "region": "us-central1",
+    "topics": {},
+    "subscriptions": {}
+  },
+  
+  "identity_platform": {
+    "region": "us-central1",
+    "identity_platform_config": {}
+  },
+  
+  "cloud_kms": {
+    "region": "us-central1",
+    "keyrings": {}
+  },
+  
+  "monitoring": {
+    "region": "us-central1",
+    "monitoring_config": {}
+  }
+}
+```
 
-### Phase 2 Dependencies
-- **Cloud Functions**: Depends on VPC and Pub/Sub
-- **API Gateway**: Depends on Cloud Functions
-- **Identity Platform**: No dependencies
-- **Cloud KMS**: No dependencies
-- **Monitoring**: Depends on all other resources
-- **Firestore Indexes**: Depends on Firestore Database
+**Characteristics**:
+- Production-like configurations
+- Multiple instances for testing
+- Full monitoring and alerting
+- Controlled access
+- Performance testing capabilities
+
+### Production Environment (`environments/prod.json`)
+
+```json
+{
+  "environment": "prod",
+  "project_id": "acs-prod-464702",
+  "project_name": "acs-prod",
+  "region": "us-central1",
+  "zone": "us-central1-c",
+  "bucket_name": "tf-state-prod-2",
+  "subnet_cidr": "10.0.3.0/24",
+  "machine_type": "e2-standard-2",
+  "disk_size": 100,
+  
+  "firestore": {
+    "database_id": "db-prod",
+    "location_id": "us-central1",
+    "database_type": "FIRESTORE_NATIVE"
+  },
+  
+  "cloud_functions": {
+    "region": "us-central1",
+    "functions": {}
+  },
+  
+  "api_gateway": {
+    "region": "us-central1",
+    "api_config": {}
+  },
+  
+  "cloud_storage": {
+    "region": "us-central1",
+    "buckets": {}
+  },
+  
+  "pub_sub": {
+    "region": "us-central1",
+    "topics": {},
+    "subscriptions": {}
+  },
+  
+  "identity_platform": {
+    "region": "us-central1",
+    "identity_platform_config": {}
+  },
+  
+  "cloud_kms": {
+    "region": "us-central1",
+    "keyrings": {}
+  },
+  
+  "monitoring": {
+    "region": "us-central1",
+    "monitoring_config": {}
+  }
+}
+```
+
+**Characteristics**:
+- Full-scale configurations
+- High availability setups
+- Comprehensive monitoring
+- Restricted access with IP whitelisting
+- Performance-optimized settings
+
+## Variable Definitions
+
+### Core Variables (`variables.tf`)
+
+```hcl
+variable "environment" {
+  description = "Environment to deploy (dev, staging, prod)"
+  type        = string
+  default     = "dev"
+
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "Environment must be dev, staging, or prod."
+  }
+}
+
+variable "project_id" {
+  description = "Google Cloud Project ID"
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.project_id == null || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
+    error_message = "Project ID must be 6-30 characters long, contain only lowercase letters, numbers, and hyphens, and start with a letter."
+  }
+}
+
+variable "region" {
+  description = "Google Cloud region for resources"
+  type        = string
+  default     = "us-central1"
+
+  validation {
+    condition     = can(regex("^[a-z]+-[a-z]+[0-9]*$", var.region))
+    error_message = "Region must be a valid Google Cloud region (e.g., us-central1, europe-west1)."
+  }
+}
+```
+
+## Output Definitions
+
+### Phase 1 Outputs
+
+```hcl
+output "environment_config" {
+  description = "Current environment configuration"
+  value       = local.env_config
+}
+
+output "firestore_database" {
+  description = "Firestore database information"
+  value = {
+    name        = google_firestore_database.database.name
+    location_id = google_firestore_database.database.location_id
+    type        = google_firestore_database.database.type
+    project     = google_firestore_database.database.project
+  }
+}
+```
 
 ## Security Considerations
 
-### Network Security
-- VPC isolation for all resources
-- Environment-specific firewall rules
-- Restricted access in production
-- Private Google access enabled
+### Environment Isolation
+- **Separate GCP Projects**: Each environment has its own isolated project
+- **State Management**: Separate state files per environment
+- **Access Control**: Environment-specific service accounts and IAM roles
+- **Network Isolation**: Separate VPC networks and subnets
 
-### Data Security
-- Encryption at rest for all storage
-- Encryption in transit for all communications
-- KMS key management for sensitive data
-- Audit logging for all operations
+### Production Protection
+- **Lifecycle Rules**: Production resources have `prevent_destroy` rules
+- **Access Restrictions**: Production access limited to admin users
+- **Confirmation Required**: Production deployments require explicit confirmation
+- **Audit Logging**: Comprehensive logging of all operations
 
-### Access Control
-- IAM roles with least privilege
-- Service account management
-- Environment-specific permissions
-- Regular access reviews
+### Data Protection
+- **Encryption at Rest**: All data encrypted using Cloud KMS
+- **Encryption in Transit**: TLS encryption for all communications
+- **Access Logging**: Detailed access logs for security monitoring
+- **Backup and Recovery**: Regular backups with recovery procedures
 
-## Cost Optimization
+## Deployment Strategy
 
-### Development Environment
-- Minimal resource allocation
-- Auto-scaling disabled
-- Basic monitoring only
-- Cost alerts enabled
+### Two-Phase Approach
 
-### Staging Environment
-- Production-like configuration
-- Full monitoring enabled
-- Performance testing resources
-- Cost optimization testing
+1. **Phase 1 Deployment**:
+   - Deploy independent resources first
+   - Establish foundational infrastructure
+   - Create basic networking and storage
 
-### Production Environment
-- Optimized resource allocation
-- Auto-scaling enabled
-- Full monitoring and alerting
-- Cost monitoring and optimization
+2. **Phase 2 Deployment**:
+   - Deploy dependent resources
+   - Configure advanced features
+   - Set up monitoring and security
+
+### Environment Promotion
+
+1. **Development**: Initial testing and development
+2. **Staging**: Pre-production validation
+3. **Production**: Live environment deployment
+
+### Rollback Strategy
+
+- **State Backups**: Automatic backups before deployments
+- **Phase-Specific Rollback**: Rollback individual phases if needed
+- **Emergency Procedures**: Quick rollback to previous stable state
 
 ## Monitoring and Observability
 
-### Infrastructure Monitoring
-- Resource utilization tracking
-- Performance metrics collection
-- Error rate monitoring
-- Cost tracking and alerts
+### Resource Monitoring
+- **Cloud Monitoring**: Comprehensive resource monitoring
+- **Logging**: Centralized logging with Cloud Logging
+- **Alerting**: Automated alerting for critical issues
+- **Performance Metrics**: Application and infrastructure performance tracking
 
-### Application Monitoring
-- API endpoint monitoring
-- Function execution tracking
-- Database performance monitoring
-- User experience metrics
+### Cost Management
+- **Resource Tagging**: Consistent tagging for cost allocation
+- **Budget Alerts**: Automated budget monitoring and alerts
+- **Cost Optimization**: Environment-specific resource sizing
+- **Usage Tracking**: Detailed usage analytics and reporting
 
-### Security Monitoring
-- Access pattern analysis
-- Security event logging
-- Compliance reporting
-- Threat detection
+## Best Practices
 
-## Conclusion
+### Code Organization
+- **Modular Design**: Reusable modules for common patterns
+- **Environment Separation**: Clear separation of environment configurations
+- **Version Control**: All configurations in version control
+- **Documentation**: Comprehensive documentation for all resources
 
-This backend infrastructure provides a comprehensive, scalable, and secure foundation for modern cloud applications. The 2-step deployment approach ensures reliable resource creation while the centralized helper files maintain consistency across environments.
+### Security Practices
+- **Principle of Least Privilege**: Minimal required permissions
+- **Regular Audits**: Periodic security reviews and updates
+- **Secret Management**: Secure handling of sensitive information
+- **Compliance**: Adherence to security and compliance standards
 
-Key benefits:
-1. **Reliable deployments** through phased approach
-2. **Environment isolation** with separate configurations
-3. **Security by design** with comprehensive controls
-4. **Scalability** through modular architecture
-5. **Maintainability** through centralized management
+### Operational Practices
+- **Automated Testing**: Automated validation of configurations
+- **Change Management**: Controlled deployment processes
+- **Disaster Recovery**: Comprehensive backup and recovery procedures
+- **Performance Optimization**: Continuous performance monitoring and optimization
 

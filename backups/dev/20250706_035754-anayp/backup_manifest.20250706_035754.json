@@ -1,0 +1,8 @@
+﻿{
+    "environment":  "dev",
+    "backup_location":  "C:\\Users\\anayp\\OneDrive\\Documents\\terraform-anay-test\\backups\\dev\\20250706_035754-anayp",
+    "timestamp":  "20250706_035754",
+    "state_location":  "gs://tf-state-dev-2/terraform/state/default.tfstate",
+    "deployment_id":  "353716ca-6754-4dce-a20a-7d75d34bfae5",
+    "user":  "anayp"
+}

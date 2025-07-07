@@ -1,24 +1,6 @@
 # Phase 1 Configuration - Independent Resources Only
 # This file contains resources that must be created first and don't depend on other resources
-
-# Load environment configuration
-locals {
-  # Get environment from variable or default to dev
-  environment = var.environment != null ? var.environment : "dev"
-
-  # Load environment-specific configuration
-  env_config_file = file("${path.module}/environments/${local.environment}.json")
-  env_config      = jsondecode(local.env_config_file)
-
-  # Common tags for all resources
-  common_tags = {
-    Environment = local.environment
-    Project     = local.env_config.project_id
-    ManagedBy   = "terraform"
-    Owner       = "infrastructure-team"
-    CostCenter  = "engineering"
-  }
-}
+# Shared configuration is loaded from shared-config.tf
 
 # Phase 1 Configuration - Core Infrastructure
 # These resources are independent and can be created first
@@ -46,5 +28,24 @@ output "firestore_database" {
     location_id = google_firestore_database.database.location_id
     type        = google_firestore_database.database.type
     project     = google_firestore_database.database.project
+  }
+}
+
+
+# create a new database db-dev2
+resource "google_firestore_database" "database2" {
+  name        = "db-dev2"
+  location_id = local.env_config.region
+  type        = "FIRESTORE_NATIVE"
+}
+
+# Output for Firestore database
+output "firestore_database_2" {
+  description = "Firestore database information"
+  value = {
+    name        = google_firestore_database.database2.name
+    location_id = google_firestore_database.database2.location_id
+    type        = google_firestore_database.database2.type
+    project     = google_firestore_database.database2.project
   }
 }

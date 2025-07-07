@@ -1,11 +1,11 @@
 # =============================================================================
-# DEVELOPMENT BACKEND CONFIGURATION
+# PRODUCTION BACKEND CONFIGURATION
 # =============================================================================
-# This file contains the backend configuration for the development environment
+# This file contains the backend configuration for the production environment
 
 terraform {
   backend "gcs" {
-    bucket = "tf-state-dev-2"
+    bucket = "tf-state-prod-2"
     prefix = "terraform/state"
   }
 } 
